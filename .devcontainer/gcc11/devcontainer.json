@@ -1,0 +1,10 @@
+{
+  "name": "gcc11",
+  "image": "insight/gcc11",
+  "customizations": {
+    "vscode": {
+      "settings": {},
+      "extensions": []
+    }
+  }
+}
