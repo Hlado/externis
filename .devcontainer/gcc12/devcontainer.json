@@ -1,6 +1,6 @@
 {
-  "name": "gcc11",
-  "image": "insight/gcc11",
+  "name": "gcc12",
+  "image": "insight/gcc12",
   "customizations": {
     "vscode": {
       "settings": {},
