@@ -21,6 +21,15 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#if __GNUC__ <= 9
+namespace json {
+
+using float_number = number;
+using integer_number = number;
+
+}
+#endif
+
 namespace externis {
 
 constexpr int MINIMUM_EVENT_LENGTH_NS = 1000000; // 1ms
@@ -70,9 +79,8 @@ void set_output_file(FILE *file) {
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            COMPILATION_START.time_since_epoch())
                            .count()));
-  output_json->set("traceEvents", new json::array());
-
-  output_events_list = (json::array *)output_json->get("traceEvents");
+  output_events_list = new json::array();
+  output_json->set("traceEvents", output_events_list);
 }
 
 void add_event(const TraceEvent &event) {

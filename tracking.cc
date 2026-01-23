@@ -213,15 +213,15 @@ void end_parse_function(FinishedFunction info) {
 
   TimeSpan ts{last_function_parsed_ts + 3, now};
   last_function_parsed_ts = now;
-  function_events.emplace_back(info.name, info.file_name, ts);
+  function_events.push_back(FunctionEvent{info.name, info.file_name, ts});
 
   if (info.scope_name) {
     if (!scope_events.empty() && did_last_function_have_scope &&
         scope_events.back().name == info.scope_name) {
       scope_events.back().ts.end = ts.end + 1;
     } else {
-      scope_events.emplace_back(info.scope_name, info.scope_type,
-                                TimeSpan{ts.start - 1, ts.end + 1});
+      scope_events.push_back(ScopeEvent{info.scope_name, info.scope_type,
+                                TimeSpan{ts.start - 1, ts.end + 1}});
     }
     did_last_function_have_scope = true;
   } else {
