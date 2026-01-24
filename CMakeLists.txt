@@ -27,7 +27,7 @@ if (fmt_FOUND)
     target_link_libraries(externis PRIVATE fmt::fmt)
 endif()
 
-set_target_properties(externis PROPERTIES CXX_STANDARD 20)
+set_target_properties(externis PROPERTIES CXX_STANDARD 17)
 set_target_properties(externis PROPERTIES COMPILE_FLAGS "-fno-rtti -g -Wall")
 set_target_properties(externis PROPERTIES PREFIX "" OUTPUT_NAME "externis")
 

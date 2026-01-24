@@ -51,15 +51,15 @@ set_t<std::string> normalized_files;
 set_t<std::string> conflicted_files;
 
 void register_include_location(const char *file_name, const char *dir_name) {
-  if (!file_to_include_directory.contains(file_name)) {
+  if (file_to_include_directory.count(file_name) == 0) {
     std::string file_std = file_name;
     file_to_include_directory[file_name] = dir_name;
     auto &folder_std = file_to_include_directory[file_std];
-    if (file_std.starts_with(folder_std)) {
+    if (file_std.find(folder_std) == 0) {
       // +1 for path separator.
       auto normalized_file = file_std.substr(folder_std.size() + 1);
       normalized_files_map[file_std] = normalized_file;
-      if (normalized_files.contains(normalized_file)) {
+      if (normalized_files.count(normalized_file) != 0) {
         conflicted_files.insert(normalized_file);
       } else {
         normalized_files.insert(normalized_file);
@@ -72,8 +72,8 @@ void register_include_location(const char *file_name, const char *dir_name) {
 }
 
 const char *normalized_file_name(const char *file_name) {
-  if (normalized_files_map.contains(file_name) and
-      !conflicted_files.contains(normalized_files_map[file_name])) {
+  if (normalized_files_map.count(file_name) != 0 &&
+      conflicted_files.count(normalized_files_map[file_name]) == 0) {
     return normalized_files_map[file_name].data();
   } else {
     return file_name;
@@ -123,8 +123,8 @@ void start_preprocess_file(const char *file_name, cpp_reader *pfile) {
   if (!file_name || !strcmp(file_name, "<command-line>")) {
     return;
   }
-  if (preprocess_start.contains(file_name) &&
-      !preprocess_end.contains(file_name)) {
+  if (preprocess_start.count(file_name) != 0 &&
+      preprocess_end.count(file_name) == 0) {
     // This is an edge case - this means that file_name is somewhere down the
     // stack and we have a circular include. Big fun!
     // Because we don't want to add the inner include, we replace file_name
@@ -133,7 +133,7 @@ void start_preprocess_file(const char *file_name, cpp_reader *pfile) {
     pfile = nullptr;
   }
 
-  if (!preprocess_start.contains(file_name)) {
+  if (preprocess_start.count(file_name) == 0) {
     preprocess_start[file_name] = now;
   }
 
@@ -164,7 +164,7 @@ void start_preprocess_file(const char *file_name, cpp_reader *pfile) {
 
 void end_preprocess_file() {
   auto now = ns_from_start();
-  if (!preprocess_end.contains(preprocessing_stack.top())) {
+  if (preprocess_end.count(preprocessing_stack.top()) == 0) {
     preprocess_end[preprocessing_stack.top()] = now;
   }
   preprocessing_stack.pop();
