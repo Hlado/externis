@@ -43,7 +43,7 @@ std::shared_ptr<std::ostream> trace;
 Clock::time_point compilationStartTimestamp = Clock::now();
 Clock::time_point lastEventTimestamp = Clock::now();
 std::string stage;
-std::deque<std::pair<std::string, std::chrono::nanoseconds>> actionLog;\
+std::deque<std::pair<std::string, std::chrono::nanoseconds>> actionLog;
 std::string activePass;
 
 std::chrono::nanoseconds measure() {

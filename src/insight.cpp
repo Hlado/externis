@@ -1,13 +1,28 @@
 #include "insight.h"
+#include "instance.h"
 #include "options.h"
 #include "utils.h"
 
 #include <gcc-plugin.h>
 #include <plugin-version.h>
 
+#include <optional>
+
 static_assert(__GNUC__ == 9, "gcc version is not supported");
 
 namespace insight {
+
+namespace {
+
+Options options;
+std::optional<Instance> instance;
+
+void handleStartUnit(void *, void *)
+{
+  instance = std::make_optional<Instance>(options);
+}
+
+}
 
 } //namespace insight
 
@@ -27,7 +42,8 @@ int plugin_init(plugin_name_args *args, plugin_gcc_version *runtimeGccVersion)
   }
 
   try {
-    auto options = parseOptions(*args);
+    options = parseOptions(*args);
+    register_callback(PLUGIN_NAME.data(), PLUGIN_START_UNIT, &handleCallback<&handleStartUnit>, nullptr);
   } catch(const std::exception &e) {
     logError(e.what());
     return 1;
