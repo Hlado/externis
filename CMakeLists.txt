@@ -18,7 +18,7 @@ endif()
 
 message("GCC plugin headers found in " ${EXTERNIS_GCC_PLUGIN_DIR})
 
-add_library(externis SHARED externis.cc tracking.cc output.cc)
+add_library(externis SHARED src/insight.cpp src/options.cpp)
 target_include_directories(externis PRIVATE ${EXTERNIS_GCC_PLUGIN_DIR}/include)
 
 # Optional, useful for debugging.
@@ -29,9 +29,9 @@ endif()
 
 set_target_properties(externis PROPERTIES CXX_STANDARD 17)
 set_target_properties(externis PROPERTIES COMPILE_FLAGS "-fno-rtti -g -Wall")
-set_target_properties(externis PROPERTIES PREFIX "" OUTPUT_NAME "externis")
+set_target_properties(externis PROPERTIES PREFIX "" OUTPUT_NAME "insight")
 
-set(EXTERNIS_PLUGIN_PATH ${CMAKE_BINARY_DIR}/externis.so)
+set(EXTERNIS_PLUGIN_PATH ${CMAKE_BINARY_DIR}/insight.so)
 
 if (EXTERNIS_INSTALL_TO_PLUGIN_DIR)
     install(TARGETS externis DESTINATION ${EXTERNIS_GCC_PLUGIN_DIR})

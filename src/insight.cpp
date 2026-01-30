@@ -1,0 +1,40 @@
+#include "insight.h"
+#include "options.h"
+#include "utils.h"
+
+#include <gcc-plugin.h>
+#include <plugin-version.h>
+
+static_assert(__GNUC__ == 9, "gcc version is not supported");
+
+namespace insight {
+
+} //namespace insight
+
+using namespace insight;
+
+//Has to be defined
+int plugin_is_GPL_compatible = 1;
+
+int plugin_init(plugin_name_args *args, plugin_gcc_version *runtimeGccVersion)
+{
+  static auto info = plugin_info{"0.1", getHelpText().data()};
+  register_callback(PLUGIN_NAME.data(), PLUGIN_INFO, nullptr, &info);
+
+  if (!plugin_default_version_check(runtimeGccVersion, &gcc_version)) {
+    logError("plugin has been compiled for different gcc version");
+    return 1;
+  }
+
+  try {
+    auto options = parseOptions(*args);
+  } catch(const std::exception &e) {
+    logError(e.what());
+    return 1;
+  } catch(...) {
+    logError("unknown error");
+    return 1;
+  }
+
+  return 0;
+}

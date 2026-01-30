@@ -1,0 +1,31 @@
+#pragma once
+
+#include <gcc-plugin.h>
+
+#include <filesystem>
+#include <string_view>
+
+namespace insight {
+
+struct Options {
+  bool noIndividual{false};
+  std::filesystem::path combined;
+};
+
+Options parseOptions(const plugin_name_args &args);
+
+constexpr std::string_view getHelpText()
+{
+  return
+    "Plugin to allow profiling compilation.\n"
+    "\n"
+    "Usage:\n"
+    "  gcc -fplugin=insight [-fplugin-arg-insight-<option>...] <gcc-args>\n"
+    "\n"
+    "Options:\n"
+    "  no-individual    Disable generation of per-file traces.\n"
+    "  combined=<path>  Path to file used to accumulate a multi-file trace. Each\n"
+    "                   individual trace is appended to the end of this file.\n";
+}
+
+} //namespace insight

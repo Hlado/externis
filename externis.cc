@@ -16,6 +16,7 @@
  */
 
 #include "externis.h"
+#include "utils.h"
 
 #include <cp/cp-tree.h>
 #include <options.h>
@@ -26,7 +27,60 @@
 #include "c-family/c-pragma.h"
 #include "cpplib.h"
 
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <unordered_map>
+
 int plugin_is_GPL_compatible = 1;
+
+namespace insight {
+
+std::shared_ptr<std::ostream> trace;
+Clock::time_point compilationStartTimestamp = Clock::now();
+Clock::time_point lastEventTimestamp = Clock::now();
+std::string stage;
+std::deque<std::pair<std::string, std::chrono::nanoseconds>> actionLog;\
+std::string activePass;
+
+std::chrono::nanoseconds measure() {
+  return Clock::now() - lastEventTimestamp;
+}
+
+template <void(*CallbackV)(void*,void*)>
+void generic_callback(void *gccData, void *userData) {
+  if(!trace) {
+    return;
+  }
+
+  CallbackV(gccData, userData);
+
+  lastEventTimestamp = Clock::now();
+}
+
+template <void(*CallbackV)(void*,void*)>
+void frontend_callback(void *gccData, void *userData) {
+  stage = "Frontend";
+
+  generic_callback<CallbackV>(gccData, userData);
+}
+
+template <void(*CallbackV)(void*,void*)>
+void backend_callback(void *gccData, void *userData) {
+  stage = "Backend";
+
+  if(!activePass.empty()) {
+    actionLog.emplace_back(stage + ";" + activePass, measure());
+    activePass.clear();
+  }
+
+  generic_callback<CallbackV>(gccData, userData);
+}
+
+} //namespace insight
 
 namespace externis {
 
@@ -58,7 +112,26 @@ void cb_finish_parse_function(void *gcc_data, void *user_data) {
       gcc_data, decl_name, expanded_location.file, scope_name, scope_type});
 }
 
-void cb_plugin_finish(void *gcc_data, void *user_data) { write_all_events(); }
+void cb_plugin_finish(void *gcc_data, void *user_data) {
+  auto compilationFinishTimestamp = insight::Clock::now();
+
+  insight::log("finished processing of '", main_input_filename, "'");
+
+  std::unordered_map<std::string, std::chrono::nanoseconds> actions;
+  for(auto &&[name, duration] : insight::actionLog) {
+    auto base = actions.count(name) == 0 ? std::chrono::nanoseconds::zero() : actions[name];
+    actions[name] = base + duration;
+  }
+
+  auto total = std::chrono::nanoseconds::zero();
+  for(auto &&[name, duration] : actions) {
+    *insight::trace << main_input_filename << ";" << name << " " << (std::chrono::duration_cast<std::chrono::microseconds>(duration)).count() << "\n";
+    total += duration;
+  }
+
+  auto uncategorized = (compilationFinishTimestamp - insight::compilationStartTimestamp) - total;
+  *insight::trace << main_input_filename << ";" << "Uncategorized " << (std::chrono::duration_cast<std::chrono::microseconds>(uncategorized)).count() << "\n";
+}
 
 void (*old_file_change_cb)(cpp_reader *, const line_map_ordinary *);
 void cb_file_change(cpp_reader *pfile, const line_map_ordinary *new_map) {
@@ -80,16 +153,64 @@ void cb_file_change(cpp_reader *pfile, const line_map_ordinary *new_map) {
   (*old_file_change_cb)(pfile, new_map);
 }
 
-void cb_start_compilation(void *gcc_data, void *user_data) {
-  start_preprocess_file(main_input_filename, nullptr);
-  cpp_callbacks *cpp_cbs = cpp_get_callbacks(parse_in);
-  old_file_change_cb = cpp_cbs->file_change;
-  cpp_cbs->file_change = cb_file_change;
+//void cb_start_compilation(void *gcc_data, void *user_data) {
+//  start_preprocess_file(main_input_filename, nullptr);
+//  cpp_callbacks *cpp_cbs = cpp_get_callbacks(parse_in);
+//  old_file_change_cb = cpp_cbs->file_change;
+//  cpp_cbs->file_change = cb_file_change;
+//}
+
+
+
+void cb_start_unit(void *gcc_data, void *user_data) {
+  insight::log("started processing of '", main_input_filename, "'");
+
+  if(!std::filesystem::exists(main_input_filename)) {
+    insight::log("input is not a file, dumping to cout");
+    insight::trace = std::shared_ptr<std::ostream>(&std::cout, [](auto &&){});
+  } else {
+    auto dumpPath = std::filesystem::path (dump_base_name);
+    dumpPath += ".trace.collapsed";
+    insight::log("dumping to '", dumpPath.string(), "'");
+    
+    auto tmp = std::make_shared<std::ofstream>(dumpPath);
+    if(!tmp->fail()) {
+      insight::trace = tmp;
+    }
+  }
+
+  insight::stage = "Preprocessing";
+
+  insight::compilationStartTimestamp = insight::Clock::now();
 }
+
+//void cb_pass_execution(void *gcc_data, void *user_data) {
+//  auto pass = (opt_pass *)gcc_data;
+//  start_opt_pass(pass);
+//}
 
 void cb_pass_execution(void *gcc_data, void *user_data) {
   auto pass = (opt_pass *)gcc_data;
-  start_opt_pass(pass);
+  
+  if(pass->type == opt_pass_type::GIMPLE_PASS || pass->type == opt_pass_type::RTL_PASS) {
+    auto fndecl = cfun->decl;
+    location_t loc = DECL_SOURCE_LOCATION(fndecl);
+    unsigned int line = 0;
+    unsigned int column = 0;
+    if (loc != UNKNOWN_LOCATION) {
+      line = LOCATION_LINE(loc);
+      column = LOCATION_COLUMN(loc);
+    }
+    auto funcName = fndecl ? IDENTIFIER_POINTER(DECL_NAME(fndecl)) : std::string("<anonymous>:") + std::to_string(line) + ":" + std::to_string(column);
+    insight::activePass = funcName;
+    insight::activePass += ";" + (pass->type == opt_pass_type::GIMPLE_PASS ? std::string{"GIMPLE;"} : std::string{"RTL;"});
+    insight::activePass += pass->name;
+  } else if(pass->type == opt_pass_type::IPA_PASS || pass->type == opt_pass_type::SIMPLE_IPA_PASS) {
+    insight::activePass = "IPA;";
+    insight::activePass += pass->name;
+  } else {
+    insight::log("unknown pass type (", pass->type, ")");
+  }
 }
 
 void cb_finish_decl(void *gcc_data, void *user_data) {
@@ -149,20 +270,24 @@ int plugin_init(struct plugin_name_args *plugin_info,
   static struct plugin_info externis_info = {
       .version = "0.1", .help = "Generate time traces of the compilation."};
   externis::COMPILATION_START = externis::clock_t::now();
-  if (!setup_output(plugin_info->argc, plugin_info->argv)) {
-    return -1;
-  }
-
-  register_callback(PLUGIN_NAME, PLUGIN_FINISH_PARSE_FUNCTION,
-                    &externis::cb_finish_parse_function, nullptr);
-  register_callback(PLUGIN_NAME, PLUGIN_FINISH, &externis::cb_plugin_finish,
-                    nullptr);
-  register_callback(PLUGIN_NAME, PLUGIN_PASS_EXECUTION,
-                    &externis::cb_pass_execution, nullptr);
+  
   register_callback(PLUGIN_NAME, PLUGIN_START_UNIT,
-                    &externis::cb_start_compilation, nullptr);
-  register_callback(PLUGIN_NAME, PLUGIN_FINISH_DECL, &externis::cb_finish_decl,
+                    &externis::cb_start_unit, nullptr);
+  register_callback(PLUGIN_NAME, PLUGIN_FINISH, &insight::generic_callback<&externis::cb_plugin_finish>,
                     nullptr);
+
+  //if (!setup_output(plugin_info->argc, plugin_info->argv)) {
+  //  return -1;
+  //}
+
+  //register_callback(PLUGIN_NAME, PLUGIN_FINISH_PARSE_FUNCTION,
+  //                  &externis::cb_finish_parse_function, nullptr);
+  
+  register_callback(PLUGIN_NAME, PLUGIN_PASS_EXECUTION,
+                    &insight::backend_callback<&externis::cb_pass_execution>, nullptr);
+  
+  //register_callback(PLUGIN_NAME, PLUGIN_FINISH_DECL, &externis::cb_finish_decl,
+  //                  nullptr);
   register_callback(PLUGIN_NAME, PLUGIN_INFO, nullptr, &externis_info);
   return 0;
 }

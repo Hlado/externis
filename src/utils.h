@@ -1,5 +1,7 @@
 #pragma once
 
+#include "insight.h"
+
 #include <chrono>
 #include <iostream>
 
@@ -11,11 +13,19 @@ namespace insight {
 // our purposes. But this may change in the future.
 using Clock = std::chrono::high_resolution_clock;
 
-inline auto &logStream = std::cout;
+template <typename... T>
+void logInfo(T... args) {
+  ((std::cout << PLUGIN_NAME << ": ") << ... << args) << "\n";
+}
 
 template <typename... T>
-void log(T... args) {
-  (logStream << ... << args) << std::endl;
+void logWarn(T... args) {
+  ((std::cerr << PLUGIN_NAME << ": [WARN] ") << ... << args) << "\n";
+}
+
+template <typename... T>
+void logError(T... args) {
+  ((std::cerr << PLUGIN_NAME << ": [ERROR] ") << ... << args) << "\n";
 }
 
 } // namespace insight
