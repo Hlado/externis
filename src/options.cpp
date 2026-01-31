@@ -2,6 +2,9 @@
 
 #include "utils.h"
 
+//Always last
+#include "gcc-headers.h"
+
 namespace insight {
 
 Options parseOptions(const plugin_name_args &args)

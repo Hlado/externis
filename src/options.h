@@ -1,9 +1,9 @@
 #pragma once
 
-#include <gcc-plugin.h>
-
 #include <filesystem>
 #include <string_view>
+
+struct plugin_name_args;
 
 namespace insight {
 
@@ -11,6 +11,7 @@ struct Options {
   bool noIndividual{false};
   std::filesystem::path combined;
 };
+
 
 Options parseOptions(const plugin_name_args &args);
 

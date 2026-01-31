@@ -4,19 +4,25 @@
 #include "options.h"
 #include "utils.h"
 
-#include <gcc-plugin.h>
-
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <numeric>
+#include <optional>
 #include <stack>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 
+//Always last
+#include "gcc-headers.h"
+
 using namespace std::chrono;
+
+extern struct cpp_reader* parse_in;
 
 namespace insight {
 
@@ -96,7 +102,18 @@ class InstanceImpl {
 public:
   explicit InstanceImpl(const Options &options)
     : mOptions{options}
+    , mReader{parse_in}
   {
+    if(mReader == nullptr) {
+      throw Error{"reader is not set"};
+    }
+    mPpCallbacks = cpp_get_callbacks(mReader);
+    if(mPpCallbacks == nullptr) {
+      throw Error{"preprocessor callbacks are empty"};
+    }
+    mPpCallbacksChain = *mPpCallbacks;
+    mReadersMapping[mReader] = this;
+
     try
     {
       PLUGIN_START_PARSE_FUNCTION;
@@ -120,25 +137,38 @@ public:
       registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
       registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_PASSES_START);
 
+      mPpCallbacks->file_change = &handlePpCallback<&InstanceImpl::handlePpFileChange, void, cpp_reader *, const line_map_ordinary *>;
+
       mStages.push(Stage{Clock::now(), getFullInputName(), {}});
       mStages.push(Stage{Clock::now(), "Preprocessing", {}});
     }
     catch(const std::exception& e)
     {
-      unregisterCallbacks();
+      cleanup();
       throw;
     }
   }
 
   ~InstanceImpl()
   {
-    unregisterCallbacks();
+    cleanup();
   }
 
   InstanceImpl(const InstanceImpl &) = delete;
   InstanceImpl &operator=(const InstanceImpl &) = delete;
 
 private:
+  static inline std::unordered_map<cpp_reader *, InstanceImpl *> mReadersMapping;
+
+  const Options mOptions;
+  std::optional<cpp_callbacks> mPpCallbacksChain;
+  cpp_reader *mReader{nullptr};
+  cpp_callbacks *mPpCallbacks{nullptr};
+  std::stack<Stage> mStages;
+  std::unordered_map<std::string, std::size_t> mHeadersVisits;
+  Steps step{Steps::Preprocessing};
+
+
   static void unregisterCallbacks() noexcept
   {
     unregister_callback(PLUGIN_NAME.data(), PLUGIN_FINISH);
@@ -149,19 +179,131 @@ private:
   template <void (InstanceImpl::*HandlerV)(void *)>
   static void handleCallback(void *gccData, void *userData)
   {
+    auto obj = static_cast<InstanceImpl *>(userData);
+
     try {
-      auto obj = static_cast<InstanceImpl *>(userData);
       (obj->*HandlerV)(gccData);
     } catch(...) {
       //It is really hard to make this whole class exception safe, so we better stop on exception
-      unregisterCallbacks();
+      obj->cleanup();
       throw;
     }
   }
 
-  const Options mOptions;
-  std::stack<Stage> mStages;
-  Steps step{Steps::Preprocessing}; 
+  template <auto HandlerV, typename RetT, typename... ArgsT>
+  static RetT handlePpCallback(ArgsT... args)
+  {
+    if(parse_in == nullptr) {
+      logError("fatal error: reader is not set, abnormal termination...");
+      std::abort();
+    }
+
+    auto it = mReadersMapping.find(parse_in);
+    if(it == mReadersMapping.end()) {
+      logError("fatal error: reader is not found, abnormal termination...");
+      std::abort();
+    }
+
+    auto obj = it->second;
+    try {
+      if constexpr(std::is_same_v<void, RetT>) {
+        (obj->*HandlerV)(args...);
+      } else {
+        return (obj->*HandlerV)(args...);
+      }
+    } catch(...) {
+      //It is really hard to make this whole class exception safe, so we better stop on exception
+      obj->cleanup();
+      throw;
+    }
+  }
+
+  void cleanup() noexcept {
+    unregisterCallbacks();
+    restorePpCallbacks();
+  }
+
+  void restorePpCallbacks() noexcept
+  {
+    if(mReader == nullptr) {
+      return;
+    }
+    
+    if(mReader != parse_in) {
+      logError("fatal error: reader changed, abnormal termination...");
+      std::abort();
+    }
+
+    auto ppCallbacks = cpp_get_callbacks(mReader);
+    if(mPpCallbacks != ppCallbacks) {
+      logError("fatal error: preprocessor callbacks, abnormal termination...");
+      std::abort();
+    }
+
+    if(mPpCallbacks->file_change != &handlePpCallback<&InstanceImpl::handlePpFileChange, void, cpp_reader *, const line_map_ordinary *>) {
+      logError("fatal error: preprocessor callbacks, abnormal termination...");
+      std::abort();
+    }
+    mPpCallbacks->file_change = mPpCallbacksChain->file_change;    
+
+    mReadersMapping.erase(mReader);
+    mReader = nullptr;
+    mPpCallbacks = nullptr;
+  }
+
+  void handlePpFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
+  {
+    static constexpr auto  UNNAMED = "<unnamed>";
+    //It seems map is null in the end when preprocessor returns to main file
+    if(lineMap != nullptr) {
+      if(lineMap->reason == LC_ENTER) {
+        auto fileNameRaw = ORDINARY_MAP_FILE_NAME(lineMap);
+        auto fileName = std::string{UNNAMED};
+        
+        if(fileNameRaw != nullptr) {
+          fileName = fileNameRaw;
+          auto it = mHeadersVisits.find(fileName);
+          if(it == mHeadersVisits.end()) {
+            mHeadersVisits[fileName] = 1;
+          } else {
+            //Once visit number hit zero it becomes unchangeable (or at least that's the idea)
+            if(it->second > 0) {
+              it->second += 1;
+            }
+          }
+        }
+
+        mStages.push(Stage{Clock::now(), fileName, {}});
+      } else if(lineMap->reason == LC_LEAVE) {
+        assert(((void)"enter/leave file preprocessor callback mismatch", mStages.size() > STAGE_STEP));
+
+        auto fileName = mStages.top().name;
+        if(fileName == UNNAMED) {
+          collapseStages(mStages.size() - 1);
+        } else {
+          auto it = mHeadersVisits.find(fileName);
+          assert(((void)"enter/leave file preprocessor callback mismatch", it != mHeadersVisits.end()));
+
+          if(it->second == 0) {
+            //We assume that every file included only once (effectively) and if we already measured it, we just skip repeated appearance
+            mStages.pop();
+          } else if(it->second == 1) {
+            //This means it is first (and last) time we got chance to measure
+            collapseStages(mStages.size() - 1);
+            it->second = 0;
+          } else {
+            //This means we encounter recursive include and in assumption of include guards we just skip nested ones
+            mStages.pop();
+            it->second -= 1;
+          }
+        }
+      }
+    }
+
+    if(mPpCallbacksChain->file_change != nullptr) {
+      (*mPpCallbacksChain->file_change)(reader, lineMap);
+    }
+  }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
   void registerCallback(int event) {
@@ -173,6 +315,7 @@ private:
   {
     if(step == Steps::Preprocessing) {
       step = Steps::Parsing;
+      restorePpCallbacks();
       collapseStages(STAGE_FILE);
       mStages.push(Stage{Clock::now(), "Parsing", {}});
     } else {
@@ -239,7 +382,7 @@ private:
 
   void collapseStages(std::size_t desiredDepth) {
     assert(((void)"desired depth must be positive", desiredDepth > 0));
-    assert(((void)"desired depth must not be greater than stack size", desiredDepth >= mStages.size()));
+    assert(((void)"desired depth must not be greater than stack size", desiredDepth <= mStages.size()));
 
     auto now = Clock::now();
 

@@ -3,10 +3,10 @@
 #include "options.h"
 #include "utils.h"
 
-#include <gcc-plugin.h>
-#include <plugin-version.h>
-
 #include <optional>
+
+//Always last
+#include "gcc-headers.h"
 
 static_assert(__GNUC__ >= 9 && __GNUC__ <= 12, "gcc version is not supported");
 
