@@ -8,7 +8,7 @@
 
 #include <optional>
 
-static_assert(__GNUC__ == 9, "gcc version is not supported");
+static_assert(__GNUC__ >= 9 && __GNUC__ <= 12, "gcc version is not supported");
 
 namespace insight {
 

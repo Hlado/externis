@@ -1,6 +1,9 @@
 #pragma once
 
-#include "options.h"
+//Weird thing, without that gcc 9 goes insane with compilation errors.
+#if __GNUC__ == 9
+#include <filesystem>
+#endif
 
 #include <memory>
 
@@ -12,9 +15,11 @@ class InstanceImpl;
 
 } //namespace internal
 
+struct Options;
+
 class Instance {
 public:
-  explicit Instance(const Options &options);  
+  explicit Instance(const Options &options);
   Instance(Instance &&);
   Instance &operator=(Instance &&);
   ~Instance();

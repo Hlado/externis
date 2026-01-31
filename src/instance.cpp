@@ -1,16 +1,19 @@
 #include "instance.h"
 
 #include "insight.h"
+#include "options.h"
 #include "utils.h"
 
 #include <gcc-plugin.h>
 
 #include <algorithm>
 #include <cassert>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <numeric>
 #include <stack>
+#include <string>
 #include <unordered_map>
 
 using namespace std::chrono;
