@@ -22,6 +22,15 @@ namespace insight {
 
 namespace {
 
+constexpr auto STAGE_FILE = std::size_t{1};
+constexpr auto STAGE_STEP = std::size_t{2};
+
+enum class Steps {
+  Preprocessing,
+  Parsing,
+  Backend
+};
+
 struct Stage {
   using Records = std::unordered_map<std::string, nanoseconds>;
 
@@ -61,8 +70,6 @@ struct Stage {
       stream << name << ";" << n << " " << duration_cast<microseconds>(d).count() << "\n";
     }
     stream.flush();
-
-    //TODO failbit
   }
 };
 
@@ -92,9 +99,29 @@ public:
   {
     try
     {
+      PLUGIN_START_PARSE_FUNCTION;
+      PLUGIN_FINISH_PARSE_FUNCTION;
+      PLUGIN_PASS_MANAGER_SETUP;
+      PLUGIN_FINISH_TYPE;
+      PLUGIN_FINISH_DECL;
+
+      PLUGIN_ALL_PASSES_START;
+      PLUGIN_ALL_PASSES_END;
+      PLUGIN_ALL_IPA_PASSES_START;
+      PLUGIN_ALL_IPA_PASSES_END;
+      PLUGIN_OVERRIDE_GATE;
+      PLUGIN_PASS_EXECUTION;
+      PLUGIN_EARLY_GIMPLE_PASSES_START;
+      PLUGIN_EARLY_GIMPLE_PASSES_END;
+
+
+
       registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
+      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
+      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_PASSES_START);
 
       mStages.push(Stage{Clock::now(), getFullInputName(), {}});
+      mStages.push(Stage{Clock::now(), "Preprocessing", {}});
     }
     catch(const std::exception& e)
     {
@@ -115,34 +142,78 @@ private:
   static void unregisterCallbacks() noexcept
   {
     unregister_callback(PLUGIN_NAME.data(), PLUGIN_FINISH);
+    unregister_callback(PLUGIN_NAME.data(), PLUGIN_FINISH_DECL);
+    unregister_callback(PLUGIN_NAME.data(), PLUGIN_ALL_PASSES_START);
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
   static void handleCallback(void *gccData, void *userData)
   {
-    auto obj = static_cast<InstanceImpl *>(userData);
-    (obj->*HandlerV)(gccData);
+    try {
+      auto obj = static_cast<InstanceImpl *>(userData);
+      (obj->*HandlerV)(gccData);
+    } catch(...) {
+      //It is really hard to make this whole class exception safe, so we better stop on exception
+      unregisterCallbacks();
+      throw;
+    }
   }
 
   const Options mOptions;
   std::stack<Stage> mStages;
+  Steps step{Steps::Preprocessing}; 
 
   template <void (InstanceImpl::*HandlerV)(void *)>
   void registerCallback(int event) {
     register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&handleCallback<HandlerV>>, this);
   }
 
+  template <void (InstanceImpl::*HandlerV)(void *)>
+  void handleParserCallback(void *gccData)
+  {
+    if(step == Steps::Preprocessing) {
+      step = Steps::Parsing;
+      collapseStages(STAGE_FILE);
+      mStages.push(Stage{Clock::now(), "Parsing", {}});
+    } else {
+      if(step != Steps::Parsing) {
+        throw Error{"parsing callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(step), ")"};
+      }
+    }
+
+    (this->*HandlerV)(gccData);
+  }
+
+  template <void (InstanceImpl::*HandlerV)(void *)>
+  void handleBackendCallback(void *gccData)
+  {
+    if(step == Steps::Parsing) {
+      step = Steps::Backend;
+      collapseStages(STAGE_FILE);
+      mStages.push(Stage{Clock::now(), "Backend", {}});
+    } else {
+      if(step != Steps::Backend) {
+        throw Error{"backend callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(step), ")"};
+      }
+    }
+
+    (this->*HandlerV)(gccData);
+  }
+
+  void handleFinishDecl(void *) {
+    //Just to test wrapper callbacks for now
+  }
+
+  void handleAllPassesStart(void *) {
+    //Just to test wrapper callbacks for now
+  }
+
   void handlePluginFinish(void *)
   {
     assert(((void)"no stages at the end", !mStages.empty()));
 
-    auto root = std::move(mStages.top());
-     while(mStages.size() > 1)
-    {
-      mStages.pop();
-      mStages.top().consume(root);
-      root = std::move(mStages.top());
-    };
+    collapseStages(STAGE_FILE);
+    auto &root = mStages.top();
 
     auto total = measure(root.start, Clock::now());
     root.records["Uncategorized"] = max(nanoseconds::zero(), nanoseconds{total - root.duration()});
@@ -150,14 +221,39 @@ private:
     std::shared_ptr<std::ostream> individual = getIndividualStream();
     if(individual) {
       root.dump(*individual);
+      if(individual->fail()) {
+        throw Error{"failed to dump individual trace"};
+      }
     }
 
     std::shared_ptr<std::ostream> combined = getCombinedStream();
     if(combined) {
        root.dump(*combined);
+       if(combined->fail()) {
+        throw Error{"failed to dump combined trace"};
+      }
     }
   }
 
+  
+
+  void collapseStages(std::size_t desiredDepth) {
+    assert(((void)"desired depth must be positive", desiredDepth > 0));
+    assert(((void)"desired depth must not be greater than stack size", desiredDepth >= mStages.size()));
+
+    auto now = Clock::now();
+
+    while(mStages.size() > desiredDepth)
+    {
+      auto stage = std::move(mStages.top());
+      mStages.pop();
+
+      auto total = measure(stage.start, now);
+      stage.records["Uncategorized"] = max(nanoseconds::zero(), nanoseconds{total - stage.duration()});
+
+      mStages.top().consume(stage);
+    };
+  }
   std::shared_ptr<std::ostream> getIndividualStream() const
   {
     std::shared_ptr<std::ostream> stream;
@@ -170,10 +266,10 @@ private:
         auto dumpPath = std::filesystem::path{dump_base_name};
         dumpPath += ".trace.collapsed";
 
-        logInfo("dumping to '", dumpPath, "'");
+        logInfo("dumping to '", dumpPath.string(), "'");
         stream = std::make_shared<std::ofstream>(dumpPath);
         if(stream->fail()) {
-          throw Error{"failed to open '", dumpPath, "'"};
+          throw Error{"failed to open '", dumpPath.string(), "'"};
         }
       }
     }
@@ -187,11 +283,11 @@ private:
 
     if(!mOptions.noIndividual) {
       if(!mOptions.combined.empty()) {
-        logInfo("dumping combined to '", mOptions.combined, "'");
+        logInfo("dumping combined to '", mOptions.combined.string(), "'");
         
         stream = std::make_shared<std::ofstream>(mOptions.combined, std::ios_base::app);
         if(stream->fail()) {
-          throw Error{"failed to open '", mOptions.combined, "'"};
+          throw Error{"failed to open '", mOptions.combined.string(), "'"};
         }
       }
     }
