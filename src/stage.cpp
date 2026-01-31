@@ -1,10 +1,30 @@
 #include "stage.h"
 
+#include <cassert>
 #include <numeric>
 
 using namespace std::chrono;
 
 namespace insight {
+
+void Stage::collapse(std::stack<Stage> &stages, std::size_t desiredDepth)
+{
+  assert(((void)"desired depth must be positive", desiredDepth > 0));
+  assert(((void)"desired depth must not be greater than stack size", desiredDepth <= stages.size()));
+
+  auto now = Clock::now();
+
+  while(stages.size() > desiredDepth)
+  {
+    auto stage = std::move(stages.top());
+    stages.pop();
+
+    auto total = measure(stage.start, now);
+    stage.records["Uncategorized"] = std::max(nanoseconds::zero(), nanoseconds{total - stage.duration()});
+
+    stages.top().consume(stage);
+  };
+}
 
 void Stage::consume(const Stage &other)
 {

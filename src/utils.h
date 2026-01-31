@@ -2,6 +2,7 @@
 
 #include "insight.h"
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -50,6 +51,14 @@ void handleCallback(void *gccData, void *userData) noexcept {
   } catch(...) {
     logError("unknown error");
   }
+}
+
+inline std::chrono::nanoseconds measure(TimePoint then, TimePoint now)
+{
+  using namespace std::chrono;
+
+  //Clock isn't guaranteed to be steady
+  return std::max(nanoseconds::zero(), nanoseconds{now - then});
 }
 
 } // namespace insight

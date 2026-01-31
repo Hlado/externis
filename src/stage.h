@@ -3,6 +3,7 @@
 #include "utils.h"
 
 #include <iosfwd>
+#include <stack>
 #include <string>
 #include <unordered_map>
 
@@ -15,6 +16,9 @@ struct Stage
   TimePoint start;
   std::string name;
   Records records;
+
+  //TODO: misplacement
+  static void collapse(std::stack<Stage> &stages, std::size_t desiredDepth);
 
   void consume(const Stage &other);
   std::chrono::nanoseconds duration() const;
