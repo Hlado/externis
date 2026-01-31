@@ -2,6 +2,7 @@
 
 #include "insight.h"
 #include "options.h"
+#include "stage.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -35,48 +36,6 @@ enum class Steps {
   Preprocessing,
   Parsing,
   Backend
-};
-
-struct Stage {
-  using Records = std::unordered_map<std::string, nanoseconds>;
-
-  TimePoint start;
-  std::string name;
-  Records records;
-
-  void consume(const Stage &other)
-  {
-    if(this == &other) {
-      for(auto &[n, d] : records) {
-        d *= 2;
-      }
-      return;
-    }
-
-    for(auto &&[n, d] : other.records) {
-      std::string fullName{other.name + ";" + n};
-      auto it = records.find(name);
-      if(it == records.end()) {
-        auto [newIt, inserted] = records.emplace(std::move(fullName), nanoseconds::zero());
-        it = newIt;
-      }
-      it->second += d;
-    }
-  }
-
-  nanoseconds duration() const
-  {
-    using Pair = Records::value_type;
-    return std::accumulate(records.cbegin(), records.cend(), nanoseconds::zero(), [](nanoseconds acc, const Pair &r) { return acc + r.second; });
-  }
-
-  void dump(std::ostream &stream) const
-  {
-    for(auto &&[n, d] : records) {
-      stream << name << ";" << n << " " << duration_cast<microseconds>(d).count() << "\n";
-    }
-    stream.flush();
-  }
 };
 
 nanoseconds measure(TimePoint then, TimePoint now)
@@ -138,6 +97,7 @@ public:
       registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_PASSES_START);
 
       mPpCallbacks->file_change = &handlePpCallback<&InstanceImpl::handlePpFileChange, void, cpp_reader *, const line_map_ordinary *>;
+      mPpCallbacks->used = &handlePpCallback<&InstanceImpl::handlePpMacroUsed, void, cpp_reader *, location_t, cpp_hashnode *>;
 
       mStages.push(Stage{Clock::now(), getFullInputName(), {}});
       mStages.push(Stage{Clock::now(), "Preprocessing", {}});
@@ -244,11 +204,24 @@ private:
       logError("fatal error: preprocessor callbacks, abnormal termination...");
       std::abort();
     }
-    mPpCallbacks->file_change = mPpCallbacksChain->file_change;    
+    mPpCallbacks->file_change = mPpCallbacksChain->file_change;
+
+    if(mPpCallbacks->used != &handlePpCallback<&InstanceImpl::handlePpMacroUsed, void, cpp_reader *, location_t, cpp_hashnode *>) {
+      logError("fatal error: preprocessor callbacks, abnormal termination...");
+      std::abort();
+    }
+    mPpCallbacks->used = mPpCallbacksChain->used;
 
     mReadersMapping.erase(mReader);
     mReader = nullptr;
     mPpCallbacks = nullptr;
+  }
+
+  void handlePpMacroUsed(cpp_reader *, location_t loc, cpp_hashnode *node)
+  {
+    expanded_location xloc = expand_location(loc);
+
+    logInfo("macro '", NODE_NAME(node), "' at '", xloc.file, ":", xloc.line, ":", xloc.column, "'");
   }
 
   void handlePpFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
