@@ -77,7 +77,7 @@ public:
 
       registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
       registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
-      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_IPA_PASSES_START);
+      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handlePluginPassExecution>>(PLUGIN_PASS_EXECUTION);
 
       //!Order
       mTrace->push(getFullInputName());
@@ -116,7 +116,7 @@ private:
   static void unregisterCallbacks() noexcept
   {
     unregisterCallback(PLUGIN_FINISH);
-    unregisterCallback(PLUGIN_ALL_PASSES_START);
+    unregisterCallback(PLUGIN_PASS_EXECUTION);
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
@@ -142,11 +142,6 @@ private:
     register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&handleCallback<HandlerV>>, this);
   }
 
-  void handlePpFinish()
-  {
-    //delete
-  }
-
   template <void (InstanceImpl::*HandlerV)(void *)>
   void handleParserCallback(void *gccData)
   {
@@ -155,7 +150,7 @@ private:
       mPpProfiler.reset();
       mStep = Steps::Parsing;
       collapse(*mTrace, 1);
-      mTrace->push("Parsing");
+      mTrace->push("Parser");
     }
     if(mStep != Steps::Parsing) {
       throw Error{"parsing callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
@@ -170,6 +165,7 @@ private:
     if(mStep == Steps::Parsing) {
       mStep = Steps::Backend;
       collapse(*mTrace, 1);
+      mTrace->push("Backend");
       mBackendProfiler = BackendProfiler{mOptions, mTrace};
     } else {
       if(mStep != Steps::Backend) {
@@ -184,13 +180,13 @@ private:
     //Just to test wrapper callbacks for now
   }
 
-  void handleAllPassesStart(void *) {
-    
+  void handlePluginPassExecution(void *gccData) {
+    mBackendProfiler->handlePassExecution(gccData);
   }
 
-  void handlePluginFinish(void *)
+  void handlePluginFinish(void *gccData)
   {
-    //Release callbacks
+    mBackendProfiler->handlePluginFinish(gccData);
     mBackendProfiler.reset();
 
     collapse(*mTrace, 0);

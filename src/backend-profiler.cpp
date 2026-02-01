@@ -1,5 +1,6 @@
 #include "backend-profiler.h"
 
+#include "gcc-utils.h"
 #include "options.h"
 #include "trace.h"
 
@@ -12,6 +13,31 @@ using namespace std::chrono;
 
 namespace insight {
 
+namespace {
+
+const std::string &getPassTypeName(opt_pass_type passType)
+{
+  static const auto GIMPLE = std::string{"GIMPLE"};
+  static const auto RTL = std::string{"RTL"};
+  static const auto IPA = std::string{"IPA"};
+  static const auto UNKNOWN = std::string{"__UNKNOWN"};
+
+  switch(passType) {
+    case opt_pass_type::GIMPLE_PASS:
+      return GIMPLE;
+    case opt_pass_type::RTL_PASS:
+      return RTL;
+    case opt_pass_type::IPA_PASS:
+      [[fallthrough]];
+    case opt_pass_type::SIMPLE_IPA_PASS:
+      return IPA;
+    default:
+      return UNKNOWN;
+  };
+}
+
+} //unnamed namespace
+
 namespace internal {
 
 class BackendProfilerImpl
@@ -21,111 +47,57 @@ public:
     : mOptions{options}
     , mTrace{std::move(trace)}
   {
-    try
-    {
-      //It is very important question - are those callback being overwritten or appended or ignored?
-      registerCallback<&BackendProfilerImpl::handleCallback<&BackendProfilerImpl::handlePassExecution>>(PLUGIN_PASS_EXECUTION);
-      //registerCallback<&BackendProfilerImpl::handleCallback<&BackendProfilerImpl::handleAllPassesEnd>>(PLUGIN_ALL_PASSES_END);
 
-      mTrace->push("Backend");
-    }
-    catch(const std::exception& e)
-    {
-      cleanup();
-      throw;
-    }
   }
 
   BackendProfilerImpl(const BackendProfilerImpl &) = delete;
   BackendProfilerImpl &operator=(const BackendProfilerImpl &) = delete;
+  ~BackendProfilerImpl() = default;
 
-  ~BackendProfilerImpl()
+  void handlePassExecution(void *gccData)
   {
-    cleanup();
+    handleLastPass();
+
+    auto &pass = *static_cast<opt_pass *>(gccData);
+
+    if(pass.type == opt_pass_type::GIMPLE_PASS || pass.type == opt_pass_type::RTL_PASS) {
+      handleFunctionPass(pass);
+    } else if(pass.type == opt_pass_type::IPA_PASS || pass.type == opt_pass_type::SIMPLE_IPA_PASS) {
+      handleIpaPass(pass);
+    } else {
+      logWarn("unknown pass type (", pass.type, ")");
+    }
+
+    mTimestamp = Clock::now();
+  }
+
+  void handlePluginFinish(void *gccData)
+  {
+    handleLastPass();
   }
 
 private:
   const Options mOptions;
   std::shared_ptr<Trace> mTrace;
-  std::string activePass;
-  TimePoint mLastEventTimestamp = Clock::now();
+  std::string mLastPass;
+  TimePoint mTimestamp = Clock::now();
 
-  
-  static void unregisterCallback(int event) noexcept
+  void handleFunctionPass(opt_pass &pass)
   {
-    unregister_callback(PLUGIN_NAME.data(), event);
+    mLastPass = getFunctionQualifiedId(cfun->decl) + ";" + getPassTypeName(pass.type) + ";" + pass.name;
   }
 
-  static void unregisterCallbacks() noexcept
+  void handleIpaPass(opt_pass &pass)
   {
-    unregisterCallback(PLUGIN_PASS_EXECUTION);
-    unregisterCallback(PLUGIN_ALL_PASSES_END);
+    mLastPass = std::string{"IPA;"} + pass.name;
   }
 
-  template <void (BackendProfilerImpl::*HandlerV)(void *)>
-  static void dispatchCallback(void *gccData, void *userData)
+  void handleLastPass()
   {
-    auto obj = static_cast<BackendProfilerImpl *>(userData);
-
-    try {
-      (obj->*HandlerV)(gccData);
-    } catch(...) {
-      //It is really hard to make this whole class exception safe, so we better stop on exception
-      obj->cleanup();
-      throw;
+    if(!mLastPass.empty()) {
+      mTrace->add(Event{mLastPass, measure(mTimestamp, Clock::now())});
+      mLastPass.clear();
     }
-  }
-
-  template <void (BackendProfilerImpl::*HandlerV)(void *)>
-  void handleCallback(void *gccData)
-  {
-    if(!activePass.empty()) {
-      mTrace->add(Event{activePass, measure(mLastEventTimestamp, Clock::now())});
-      activePass.clear();
-    }
-
-    (this->*HandlerV)(gccData);
-
-    mLastEventTimestamp = Clock::now();
-  }
-
-  void handlePassExecution(void *gccData)
-  {
-    auto pass = (opt_pass *)gccData;
-
-    if(pass->type == opt_pass_type::GIMPLE_PASS || pass->type == opt_pass_type::RTL_PASS) {
-      auto fndecl = cfun->decl;
-      location_t loc = DECL_SOURCE_LOCATION(fndecl);
-      unsigned int line = 0;
-      unsigned int column = 0;
-      if (loc != UNKNOWN_LOCATION) {
-        line = LOCATION_LINE(loc);
-        column = LOCATION_COLUMN(loc);
-      }
-      auto funcName = fndecl ? IDENTIFIER_POINTER(DECL_NAME(fndecl)) : std::string("<anonymous>:") + std::to_string(line) + ":" + std::to_string(column);
-      activePass = funcName;
-      activePass += ";" + (pass->type == opt_pass_type::GIMPLE_PASS ? std::string{"GIMPLE;"} : std::string{"RTL;"});
-      activePass += pass->name;
-    } else if(pass->type == opt_pass_type::IPA_PASS || pass->type == opt_pass_type::SIMPLE_IPA_PASS) {
-      activePass = "IPA;";
-      activePass += pass->name;
-    } else {
-      logWarn("unknown pass type (", pass->type, ")");
-    }
-  }
-
-  void handleAllPassesEnd(void *gccData)
-  {
-    
-  }
-
-  void cleanup() noexcept {
-    unregisterCallbacks();
-  }
-
-  template <void (BackendProfilerImpl::*HandlerV)(void *)>
-  void registerCallback(int event) {
-    register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&dispatchCallback<HandlerV>>, this);
   }
 };
 
@@ -142,5 +114,15 @@ BackendProfiler::BackendProfiler(const Options &options, std::shared_ptr<Trace> 
 BackendProfiler::BackendProfiler(BackendProfiler &&) = default;
 BackendProfiler &BackendProfiler::operator=(BackendProfiler &&) = default;
 BackendProfiler::~BackendProfiler() = default;
+
+void BackendProfiler::handlePassExecution(void *gccData)
+{
+  mImpl->handlePassExecution(gccData);
+}
+
+void BackendProfiler::handlePluginFinish(void *gccData)
+{
+  mImpl->handlePluginFinish(gccData);
+}
 
 } //namespace insight

@@ -1,10 +1,5 @@
 #pragma once
 
-//Weird thing, without that gcc 9 goes insane with compilation errors.
-#if __GNUC__ == 9
-#include <filesystem>
-#endif
-
 #include <memory>
 
 namespace insight {
