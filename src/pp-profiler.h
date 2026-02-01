@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 
 namespace insight {
@@ -15,7 +16,7 @@ struct Stage;
 
 class PpProfiler {
 public:
-  explicit PpProfiler(const Options &options);
+  explicit PpProfiler(const Options &options, std::function<void()> finishHandler = {});
   PpProfiler(PpProfiler &&);
   PpProfiler &operator=(PpProfiler &&);
   ~PpProfiler();

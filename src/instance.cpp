@@ -1,5 +1,6 @@
 #include "instance.h"
 
+#include "backend-profiler.h"
 #include "insight.h"
 #include "options.h"
 #include "pp-profiler.h"
@@ -54,7 +55,7 @@ class InstanceImpl {
 public:
   explicit InstanceImpl(const Options &options)
     : mOptions{options}
-    , mPpProfiler{options}
+    , mPpProfiler{PpProfiler{options, std::bind(&InstanceImpl::handlePpFinish, this)}}
   {
     try
     {
@@ -76,8 +77,7 @@ public:
 
 
       registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
-      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
-      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_PASSES_START);
+      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_IPA_PASSES_START);
 
       mStages.push(Stage{Clock::now(), getFullInputName(), {}});
     }
@@ -99,15 +99,20 @@ public:
 private:
   const Options mOptions;
   std::optional<PpProfiler> mPpProfiler;
+  std::optional<BackendProfiler> mBackendProfiler;
   std::stack<Stage> mStages;
   Steps mStep{Steps::Preprocessing};
 
 
+  static void unregisterCallback(int event) noexcept
+  {
+    unregister_callback(PLUGIN_NAME.data(), event);
+  }
+
   static void unregisterCallbacks() noexcept
   {
-    unregister_callback(PLUGIN_NAME.data(), PLUGIN_FINISH);
-    unregister_callback(PLUGIN_NAME.data(), PLUGIN_FINISH_DECL);
-    unregister_callback(PLUGIN_NAME.data(), PLUGIN_ALL_PASSES_START);
+    unregisterCallback(PLUGIN_FINISH);
+    unregisterCallback(PLUGIN_ALL_PASSES_START);
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
@@ -133,20 +138,21 @@ private:
     register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&handleCallback<HandlerV>>, this);
   }
 
+  void handlePpFinish()
+  {
+    mStep = Steps::Parsing;
+    mPpProfiler->dump(mStages.top());
+    //Release preprocessor callbacks
+    mPpProfiler.reset();
+    Stage::collapse(mStages, STAGE_FILE);
+    mStages.push(Stage{Clock::now(), "Parsing", {}});
+  }
+
   template <void (InstanceImpl::*HandlerV)(void *)>
   void handleParserCallback(void *gccData)
   {
-    if(mStep == Steps::Preprocessing) {
-      mStep = Steps::Parsing;
-      mPpProfiler->dump(mStages.top());
-      //Release preprocessor callbacks
-      mPpProfiler.reset();
-      Stage::collapse(mStages, STAGE_FILE);
-      mStages.push(Stage{Clock::now(), "Parsing", {}});
-    } else {
-      if(mStep != Steps::Parsing) {
-        throw Error{"parsing callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
-      }
+    if(mStep != Steps::Parsing) {
+      throw Error{"parsing callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
     }
 
     (this->*HandlerV)(gccData);
@@ -158,7 +164,7 @@ private:
     if(mStep == Steps::Parsing) {
       mStep = Steps::Backend;
       Stage::collapse(mStages, STAGE_FILE);
-      mStages.push(Stage{Clock::now(), "Backend", {}});
+      mBackendProfiler = BackendProfiler{mOptions};
     } else {
       if(mStep != Steps::Backend) {
         throw Error{"backend callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
@@ -173,11 +179,15 @@ private:
   }
 
   void handleAllPassesStart(void *) {
-    //Just to test wrapper callbacks for now
+    
   }
 
   void handlePluginFinish(void *)
   {
+    mBackendProfiler->dump(mStages.top());
+    //Release callbacks
+    mBackendProfiler.reset();
+
     assert(((void)"no stages at the end", !mStages.empty()));
 
     Stage::collapse(mStages, STAGE_FILE);
@@ -201,6 +211,8 @@ private:
         throw Error{"failed to dump combined trace"};
       }
     }
+
+    cleanup();
   }
 
   std::shared_ptr<std::ostream> getIndividualStream() const

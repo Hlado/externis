@@ -44,9 +44,10 @@ namespace internal {
 class PpProfilerImpl
 {
 public:
-  explicit PpProfilerImpl(const Options &options)
+  PpProfilerImpl(const Options &options, std::function<void()> finishHandler)
     : mOptions{options}
     , mReader{parse_in}
+    , mFinishHandler(finishHandler)
   {
     if(mReader == nullptr) {
       throw Error{"reader is not set"};
@@ -114,7 +115,7 @@ private:
   TimePoint mLastCallbackTimestamp{Clock::now()};
   TimePoint mSecondToLastCallbackTimestamp{Clock::now()};
   CallbackInfo mLastCallbackInfo;
-
+  std::function<void()> mFinishHandler;
 
   //We do not need non-void callbacks for now and it would complicate code a fair bit,
   //so we do not support that case yet
@@ -286,6 +287,10 @@ private:
     }
 
     mLastCallbackInfo = std::monostate{};
+
+    if(lineMap == nullptr && mFinishHandler) {
+      mFinishHandler();
+    }
   }
 };
 
@@ -293,8 +298,8 @@ private:
 
 using internal::PpProfilerImpl;
 
-PpProfiler::PpProfiler(const Options &options)
-  : mImpl{std::make_unique<PpProfilerImpl>(options)}
+PpProfiler::PpProfiler(const Options &options, std::function<void()> finishHandler)
+  : mImpl{std::make_unique<PpProfilerImpl>(options, finishHandler)}
 {
 
 }

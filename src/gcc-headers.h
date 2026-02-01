@@ -10,4 +10,8 @@
 #include <cpplib.h>
 #include <plugin-version.h>
 
+#include <system.h>
+#include <tree.h>
+#include <tree-pass.h>
+
 #undef abort

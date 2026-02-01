@@ -18,7 +18,7 @@ endif()
 
 message("GCC plugin headers found in " ${EXTERNIS_GCC_PLUGIN_DIR})
 
-add_library(externis SHARED src/insight.cpp src/instance.cpp src/options.cpp src/pp-profiler.cpp src/stage.cpp)
+add_library(externis SHARED src/backend-profiler.cpp src/insight.cpp src/instance.cpp src/options.cpp src/pp-profiler.cpp src/stage.cpp)
 target_include_directories(externis PRIVATE ${EXTERNIS_GCC_PLUGIN_DIR}/include)
 
 # Optional, useful for debugging.
