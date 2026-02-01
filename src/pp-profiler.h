@@ -12,16 +12,14 @@ class PpProfilerImpl;
 } //namespace internal
 
 struct Options;
-struct Stage;
+class Trace;
 
 class PpProfiler {
 public:
-  explicit PpProfiler(const Options &options, std::function<void()> finishHandler = {});
+  PpProfiler(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler = {});
   PpProfiler(PpProfiler &&);
   PpProfiler &operator=(PpProfiler &&);
   ~PpProfiler();
-
-  void dump(Stage &sink) const;
 
 private:
   std::unique_ptr<internal::PpProfilerImpl> mImpl;

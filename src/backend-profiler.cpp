@@ -1,7 +1,7 @@
 #include "backend-profiler.h"
 
 #include "options.h"
-#include "stage.h"
+#include "trace.h"
 
 #include <chrono>
 
@@ -17,8 +17,9 @@ namespace internal {
 class BackendProfilerImpl
 {
 public:
-  explicit BackendProfilerImpl(const Options &options)
-    : mOptions(options)
+  explicit BackendProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
+    : mOptions{options}
+    , mTrace{std::move(trace)}
   {
     try
     {
@@ -26,7 +27,7 @@ public:
       registerCallback<&BackendProfilerImpl::handleCallback<&BackendProfilerImpl::handlePassExecution>>(PLUGIN_PASS_EXECUTION);
       //registerCallback<&BackendProfilerImpl::handleCallback<&BackendProfilerImpl::handleAllPassesEnd>>(PLUGIN_ALL_PASSES_END);
 
-      mStages.push(Stage{Clock::now(), "Backend", {}});
+      mTrace->push("Backend");
     }
     catch(const std::exception& e)
     {
@@ -43,17 +44,9 @@ public:
     cleanup();
   }
 
-  void dump(Stage &sink) const
-  {
-    //TODO: probably need more efficient solution - && overload?
-    auto tmp = mStages;
-    Stage::collapse(tmp, 1);
-    sink.consume(tmp.top());
-  }
-
 private:
   const Options mOptions;
-  std::stack<Stage> mStages;
+  std::shared_ptr<Trace> mTrace;
   std::string activePass;
   TimePoint mLastEventTimestamp = Clock::now();
 
@@ -87,7 +80,7 @@ private:
   void handleCallback(void *gccData)
   {
     if(!activePass.empty()) {
-      mStages.top().records[activePass] = measure(mLastEventTimestamp, Clock::now());
+      mTrace->add(Event{activePass, measure(mLastEventTimestamp, Clock::now())});
       activePass.clear();
     }
 
@@ -99,7 +92,7 @@ private:
   void handlePassExecution(void *gccData)
   {
     auto pass = (opt_pass *)gccData;
-  
+
     if(pass->type == opt_pass_type::GIMPLE_PASS || pass->type == opt_pass_type::RTL_PASS) {
       auto fndecl = cfun->decl;
       location_t loc = DECL_SOURCE_LOCATION(fndecl);
@@ -140,8 +133,8 @@ private:
 
 using internal::BackendProfilerImpl;
 
-BackendProfiler::BackendProfiler(const Options &options)
-  : mImpl{std::make_unique<BackendProfilerImpl>(options)}
+BackendProfiler::BackendProfiler(const Options &options, std::shared_ptr<Trace> trace)
+  : mImpl{std::make_unique<BackendProfilerImpl>(options, std::move(trace))}
 {
 
 }
@@ -149,10 +142,5 @@ BackendProfiler::BackendProfiler(const Options &options)
 BackendProfiler::BackendProfiler(BackendProfiler &&) = default;
 BackendProfiler &BackendProfiler::operator=(BackendProfiler &&) = default;
 BackendProfiler::~BackendProfiler() = default;
-
-void BackendProfiler::dump(Stage &sink) const
-{
-  return mImpl->dump(sink);
-}
 
 } //namespace insight

@@ -4,7 +4,7 @@
 #include "insight.h"
 #include "options.h"
 #include "pp-profiler.h"
-#include "stage.h"
+#include "trace.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -55,7 +55,6 @@ class InstanceImpl {
 public:
   explicit InstanceImpl(const Options &options)
     : mOptions{options}
-    , mPpProfiler{PpProfiler{options, std::bind(&InstanceImpl::handlePpFinish, this)}}
   {
     try
     {
@@ -77,9 +76,12 @@ public:
 
 
       registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
+      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
       registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleAllPassesStart>>(PLUGIN_ALL_IPA_PASSES_START);
 
-      mStages.push(Stage{Clock::now(), getFullInputName(), {}});
+      //!Order
+      mTrace->push(getFullInputName());
+      mPpProfiler= PpProfiler{options, mTrace, std::bind(&InstanceImpl::handlePpFinish, this)};
     }
     catch(const std::exception& e)
     {
@@ -98,9 +100,10 @@ public:
 
 private:
   const Options mOptions;
+  //!Order
+  std::shared_ptr<Trace> mTrace{std::make_shared<Trace>()};
   std::optional<PpProfiler> mPpProfiler;
   std::optional<BackendProfiler> mBackendProfiler;
-  std::stack<Stage> mStages;
   Steps mStep{Steps::Preprocessing};
 
 
@@ -140,17 +143,19 @@ private:
 
   void handlePpFinish()
   {
-    mStep = Steps::Parsing;
-    mPpProfiler->dump(mStages.top());
-    //Release preprocessor callbacks
-    mPpProfiler.reset();
-    Stage::collapse(mStages, STAGE_FILE);
-    mStages.push(Stage{Clock::now(), "Parsing", {}});
+    //delete
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
   void handleParserCallback(void *gccData)
   {
+    if(mStep == Steps::Preprocessing) {
+      //Release preprocessor callbacks
+      mPpProfiler.reset();
+      mStep = Steps::Parsing;
+      collapse(*mTrace, 1);
+      mTrace->push("Parsing");
+    }
     if(mStep != Steps::Parsing) {
       throw Error{"parsing callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
     }
@@ -163,8 +168,8 @@ private:
   {
     if(mStep == Steps::Parsing) {
       mStep = Steps::Backend;
-      Stage::collapse(mStages, STAGE_FILE);
-      mBackendProfiler = BackendProfiler{mOptions};
+      collapse(*mTrace, 1);
+      mBackendProfiler = BackendProfiler{mOptions, mTrace};
     } else {
       if(mStep != Steps::Backend) {
         throw Error{"backend callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
@@ -184,21 +189,15 @@ private:
 
   void handlePluginFinish(void *)
   {
-    mBackendProfiler->dump(mStages.top());
     //Release callbacks
     mBackendProfiler.reset();
 
-    assert(((void)"no stages at the end", !mStages.empty()));
-
-    Stage::collapse(mStages, STAGE_FILE);
-    auto &root = mStages.top();
-
-    auto total = measure(root.start, Clock::now());
-    root.records["Uncategorized"] = max(nanoseconds::zero(), nanoseconds{total - root.duration()});
+    collapse(*mTrace, 0);
+    auto collapsed = mTrace->flatten();
 
     std::shared_ptr<std::ostream> individual = getIndividualStream();
     if(individual) {
-      root.dump(*individual);
+      dump(collapsed, *individual);
       if(individual->fail()) {
         throw Error{"failed to dump individual trace"};
       }
@@ -206,7 +205,7 @@ private:
 
     std::shared_ptr<std::ostream> combined = getCombinedStream();
     if(combined) {
-       root.dump(*combined);
+      dump(collapsed, *combined);
        if(combined->fail()) {
         throw Error{"failed to dump combined trace"};
       }

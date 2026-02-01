@@ -1,7 +1,7 @@
 #include "pp-profiler.h"
 
 #include "options.h"
-#include "stage.h"
+#include "trace.h"
 #include "utils.h"
 
 #include <cassert>
@@ -44,10 +44,11 @@ namespace internal {
 class PpProfilerImpl
 {
 public:
-  PpProfilerImpl(const Options &options, std::function<void()> finishHandler)
+  PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler)
     : mOptions{options}
     , mReader{parse_in}
     , mFinishHandler(finishHandler)
+    , mTrace{std::move(trace)}
   {
     if(mReader == nullptr) {
       throw Error{"reader is not set"};
@@ -77,7 +78,8 @@ public:
         mOurCallbacks.line_change = mReaderCallbacksAddress->line_change;
       }
 
-      mStages.push(Stage{Clock::now(), "Preprocessing", {}});
+      mStart = Clock::now();
+      mTrace->push("Preprocessing");
     }
     catch(const std::exception& e)
     {
@@ -94,14 +96,6 @@ public:
     cleanup();
   }
 
-  void dump(Stage &sink) const
-  {
-    //TODO: probably need more efficient solution - && overload?
-    auto tmp = mStages;
-    Stage::collapse(tmp, 1);
-    sink.consume(tmp.top());
-  }
-
 private:
   static inline std::unordered_map<cpp_reader *, PpProfilerImpl *> mReadersMapping;
 
@@ -110,7 +104,8 @@ private:
   cpp_callbacks mOurCallbacks;
   cpp_reader *mReader{nullptr};
   cpp_callbacks *mReaderCallbacksAddress{nullptr};
-  std::stack<Stage> mStages;
+  std::shared_ptr<Trace> mTrace;
+  TimePoint mStart{Clock::now()};
   std::unordered_map<std::string, std::size_t> mHeadersVisits;
   TimePoint mLastCallbackTimestamp{Clock::now()};
   TimePoint mSecondToLastCallbackTimestamp{Clock::now()};
@@ -149,13 +144,7 @@ private:
     auto now = Clock::now();
     if(std::holds_alternative<UsedInfo>(mLastCallbackInfo)) {
       auto &usedInfo = std::get<UsedInfo>(mLastCallbackInfo);
-      auto &stage = mStages.top();
-      auto it = stage.records.find(usedInfo.name);
-      if(it == stage.records.end()) {
-        auto [newIt, inserted] = stage.records.insert(std::make_pair(usedInfo.name, nanoseconds::zero()));
-        it = newIt;
-      }
-      it->second += measure(mSecondToLastCallbackTimestamp, now);
+      mTrace->add(Event{usedInfo.name, measure(mSecondToLastCallbackTimestamp, now)});
     }
 
     (this->*HandlerV)(args...);
@@ -255,27 +244,28 @@ private:
           }
         }
 
-        mStages.push(Stage{Clock::now(), fileName, {}});
+        mTrace->push(fileName);
       } else if(lineMap->reason == LC_LEAVE) {
-        assert(((void)"enter/leave file preprocessor callback mismatch", mStages.size() > 0));
+        //We either need to track initial depth or part ways with this assertion
+        //assert(((void)"enter/leave file preprocessor callback mismatch", mTrace->depth() > 1 mStages.size() > 0));
 
-        auto fileName = mStages.top().name;
+        auto fileName = mTrace->name();
         if(fileName == UNNAMED) {
-          Stage::collapse(mStages, mStages.size() - 1);
+          collapse(*mTrace, mTrace->depth() - 1);
         } else {
           auto it = mHeadersVisits.find(fileName);
           assert(((void)"enter/leave file preprocessor callback mismatch", it != mHeadersVisits.end()));
 
           if(it->second == 0) {
             //We assume that every file included only once (effectively) and if we already measured it, we just skip repeated appearance
-            mStages.pop();
+            mTrace->drop();
           } else if(it->second == 1) {
             //This means it is first (and last) time we got chance to measure
-            Stage::collapse(mStages, mStages.size() - 1);
+            collapse(*mTrace, mTrace->depth() - 1);
             it->second = 0;
           } else {
             //This means we encounter recursive include and in assumption of include guards we just skip nested ones
-            mStages.pop();
+            mTrace->drop();
             it->second -= 1;
           }
         }
@@ -290,6 +280,7 @@ private:
 
     if(lineMap == nullptr && mFinishHandler) {
       mFinishHandler();
+      cleanup();
     }
   }
 };
@@ -298,8 +289,8 @@ private:
 
 using internal::PpProfilerImpl;
 
-PpProfiler::PpProfiler(const Options &options, std::function<void()> finishHandler)
-  : mImpl{std::make_unique<PpProfilerImpl>(options, finishHandler)}
+PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler)
+  : mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace), finishHandler)}
 {
 
 }
@@ -307,10 +298,5 @@ PpProfiler::PpProfiler(const Options &options, std::function<void()> finishHandl
 PpProfiler::PpProfiler(PpProfiler &&) = default;
 PpProfiler &PpProfiler::operator=(PpProfiler &&) = default;
 PpProfiler::~PpProfiler() = default;
-
-void PpProfiler::dump(Stage &sink) const
-{
-  return mImpl->dump(sink);
-}
 
 } //namespace insight

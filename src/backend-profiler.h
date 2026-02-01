@@ -11,16 +11,14 @@ class BackendProfilerImpl;
 } //namespace internal
 
 struct Options;
-struct Stage;
+class Trace;
 
 class BackendProfiler {
 public:
-  explicit BackendProfiler(const Options &options);
+  explicit BackendProfiler(const Options &options, std::shared_ptr<Trace> trace);
   BackendProfiler(BackendProfiler &&);
   BackendProfiler &operator=(BackendProfiler &&);
   ~BackendProfiler();
-
-  void dump(Stage &sink) const;
 
 private:
   std::unique_ptr<internal::BackendProfilerImpl> mImpl;

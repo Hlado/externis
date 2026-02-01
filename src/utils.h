@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <sstream>
+#include <unordered_map>
 
 namespace insight {
 
@@ -59,6 +60,16 @@ inline std::chrono::nanoseconds measure(TimePoint then, TimePoint now)
 
   //Clock isn't guaranteed to be steady
   return std::max(nanoseconds::zero(), nanoseconds{now - then});
+}
+
+inline void dump(std::unordered_map<std::string, std::chrono::nanoseconds> &collapsed, std::ostream &stream)
+{
+  using namespace std::chrono;
+
+  for(auto &&[n, d] : collapsed) {
+    stream << n << " " << duration_cast<microseconds>(d).count() << "\n";
+  }
+  stream.flush();
 }
 
 } // namespace insight
