@@ -44,10 +44,9 @@ namespace internal {
 class PpProfilerImpl
 {
 public:
-  PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler)
+  PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
     : mOptions{options}
     , mReader{parse_in}
-    , mFinishHandler(finishHandler)
     , mTrace{std::move(trace)}
   {
     if(mReader == nullptr) {
@@ -110,7 +109,6 @@ private:
   TimePoint mLastCallbackTimestamp{Clock::now()};
   TimePoint mSecondToLastCallbackTimestamp{Clock::now()};
   CallbackInfo mLastCallbackInfo;
-  std::function<void()> mFinishHandler;
 
   //We do not need non-void callbacks for now and it would complicate code a fair bit,
   //so we do not support that case yet
@@ -278,8 +276,7 @@ private:
 
     mLastCallbackInfo = std::monostate{};
 
-    if(lineMap == nullptr && mFinishHandler) {
-      mFinishHandler();
+    if(lineMap == nullptr) {
       cleanup();
     }
   }
@@ -289,8 +286,8 @@ private:
 
 using internal::PpProfilerImpl;
 
-PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler)
-  : mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace), finishHandler)}
+PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace)
+  : mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace))}
 {
 
 }

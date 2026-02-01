@@ -81,7 +81,8 @@ public:
 
       //!Order
       mTrace->push(getFullInputName());
-      mPpProfiler= PpProfiler{options, mTrace, std::bind(&InstanceImpl::handlePpFinish, this)};
+      mTrace->push("Preprocessor");
+      mPpProfiler = PpProfiler{options, mTrace};
     }
     catch(const std::exception& e)
     {

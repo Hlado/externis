@@ -16,7 +16,7 @@ class Trace;
 
 class PpProfiler {
 public:
-  PpProfiler(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler = {});
+  PpProfiler(const Options &options, std::shared_ptr<Trace> trace);
   PpProfiler(PpProfiler &&);
   PpProfiler &operator=(PpProfiler &&);
   ~PpProfiler();
