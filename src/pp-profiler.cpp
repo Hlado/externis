@@ -47,8 +47,60 @@ public:
 
   }
 
+  void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
+  {
+    static constexpr auto  UNNAMED = "<unnamed>";
+    //It seems map is null in the end when preprocessor returns to main file
+    if(lineMap != nullptr) {
+      if(lineMap->reason == LC_ENTER) {
+        auto fileNameRaw = ORDINARY_MAP_FILE_NAME(lineMap);
+        auto fileName = std::string{UNNAMED};
+        
+        if(fileNameRaw != nullptr) {
+          fileName = fileNameRaw;
+          auto it = mHeadersVisits.find(fileName);
+          if(it == mHeadersVisits.end()) {
+            mHeadersVisits[fileName] = 1;
+          } else {
+            //Once visit number hit zero it becomes unchangeable (or at least that's the idea)
+            if(it->second > 0) {
+              it->second += 1;
+            }
+          }
+        }
+
+        mTrace->push(fileName);
+      } else if(lineMap->reason == LC_LEAVE) {
+        //We either need to track initial depth or part ways with this assertion
+        //assert(((void)"enter/leave file preprocessor callback mismatch", mTrace->depth() > 1 mStages.size() > 0));
+
+        auto fileName = mTrace->name();
+        if(fileName == UNNAMED) {
+          collapse(*mTrace, mTrace->depth() - 1);
+        } else {
+          auto it = mHeadersVisits.find(fileName);
+          assert(((void)"enter/leave file preprocessor callback mismatch", it != mHeadersVisits.end()));
+
+          if(it->second == 0) {
+            //We assume that every file included only once (effectively) and if we already measured it, we just skip repeated appearance
+            mTrace->drop();
+          } else if(it->second == 1) {
+            //This means it is first (and last) time we got chance to measure
+            collapse(*mTrace, mTrace->depth() - 1);
+            it->second = 0;
+          } else {
+            //This means we encounter recursive include and in assumption of include guards we just skip nested ones
+            mTrace->drop();
+            it->second -= 1;
+          }
+        }
+      }
+    }
+  }
+
 private:
   std::shared_ptr<Trace> mTrace;
+  std::unordered_map<std::string, std::size_t> mHeadersVisits;
 };
 
 class MacroTracker
@@ -109,7 +161,7 @@ public:
   PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
     : mOptions{options}
     , mReader{parse_in}
-    , mTrace{trace}
+    , mHeadersTracker{trace}
     , mMacroTracker{trace}
   {
     if(mReader == nullptr) {
@@ -160,8 +212,7 @@ private:
   cpp_callbacks mOurCallbacks;
   cpp_reader *mReader{nullptr};
   cpp_callbacks *mReaderCallbacksAddress{nullptr};
-  std::shared_ptr<Trace> mTrace;
-  std::unordered_map<std::string, std::size_t> mHeadersVisits;
+  HeadersTracker mHeadersTracker;
   MacroTracker mMacroTracker;
 
   //We do not need non-void callbacks for now and it would complicate code a fair bit,
@@ -219,6 +270,10 @@ private:
 
   void cleanup() noexcept {
     restorePpCallbacks();
+
+    mReadersMapping.erase(mReader);
+    mReader = nullptr;
+    mReaderCallbacksAddress = nullptr;
   }
 
   void restorePpCallbacks() noexcept
@@ -262,70 +317,14 @@ private:
     ppCallbacks->used = mOriginalCallbacks.used;
     ppCallbacks->used_define = mOriginalCallbacks.used_define;
     ppCallbacks->line_change = mOriginalCallbacks.line_change;
-
-    mReadersMapping.erase(mReader);
-    mReader = nullptr;
-    mReaderCallbacksAddress = nullptr;
   }
-
-  
 
   void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
   {
-    static constexpr auto  UNNAMED = "<unnamed>";
-    //It seems map is null in the end when preprocessor returns to main file
-    if(lineMap != nullptr) {
-      if(lineMap->reason == LC_ENTER) {
-        auto fileNameRaw = ORDINARY_MAP_FILE_NAME(lineMap);
-        auto fileName = std::string{UNNAMED};
-        
-        if(fileNameRaw != nullptr) {
-          fileName = fileNameRaw;
-          auto it = mHeadersVisits.find(fileName);
-          if(it == mHeadersVisits.end()) {
-            mHeadersVisits[fileName] = 1;
-          } else {
-            //Once visit number hit zero it becomes unchangeable (or at least that's the idea)
-            if(it->second > 0) {
-              it->second += 1;
-            }
-          }
-        }
-
-        mTrace->push(fileName);
-      } else if(lineMap->reason == LC_LEAVE) {
-        //We either need to track initial depth or part ways with this assertion
-        //assert(((void)"enter/leave file preprocessor callback mismatch", mTrace->depth() > 1 mStages.size() > 0));
-
-        auto fileName = mTrace->name();
-        if(fileName == UNNAMED) {
-          collapse(*mTrace, mTrace->depth() - 1);
-        } else {
-          auto it = mHeadersVisits.find(fileName);
-          assert(((void)"enter/leave file preprocessor callback mismatch", it != mHeadersVisits.end()));
-
-          if(it->second == 0) {
-            //We assume that every file included only once (effectively) and if we already measured it, we just skip repeated appearance
-            mTrace->drop();
-          } else if(it->second == 1) {
-            //This means it is first (and last) time we got chance to measure
-            collapse(*mTrace, mTrace->depth() - 1);
-            it->second = 0;
-          } else {
-            //This means we encounter recursive include and in assumption of include guards we just skip nested ones
-            mTrace->drop();
-            it->second -= 1;
-          }
-        }
-      }
-    }
+    mHeadersTracker.handleFileChange(reader, lineMap);
 
     if(mOriginalCallbacks.file_change != nullptr) {
       (mOriginalCallbacks.file_change)(reader, lineMap);
-    }
-
-    if(lineMap == nullptr) {
-      cleanup();
     }
   }
 };
