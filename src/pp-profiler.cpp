@@ -5,8 +5,13 @@
 #include "utils.h"
 
 #include <cassert>
+#include <cstring>
+#include <memory>
 #include <stack>
+#include <string>
+#include <type_traits>
 #include <unordered_map>
+#include <variant>
 
 //Always last
 #include "gcc-headers.h"
@@ -16,6 +21,23 @@ using namespace std::chrono;
 extern struct cpp_reader* parse_in;
 
 namespace insight {
+
+namespace {
+
+enum class CallbackType
+{
+  Other,
+  Used
+};
+
+struct UsedInfo
+{
+  std::string name;
+};
+
+using CallbackInfo = std::variant<std::monostate, UsedInfo>;
+
+} //unnamed namespace
 
 namespace internal {
 
@@ -29,17 +51,30 @@ public:
     if(mReader == nullptr) {
       throw Error{"reader is not set"};
     }
-    mPpCallbacks = cpp_get_callbacks(mReader);
-    if(mPpCallbacks == nullptr) {
+    mReaderCallbacksAddress = cpp_get_callbacks(mReader);
+    if(mReaderCallbacksAddress == nullptr) {
       throw Error{"preprocessor callbacks are empty"};
     }
-    mPpCallbacksChain = *mPpCallbacks;
+    mOriginalCallbacks = *mReaderCallbacksAddress;
+    mOurCallbacks = mOriginalCallbacks;
     mReadersMapping[mReader] = this;
 
     try
     {
-      mPpCallbacks->file_change = &handleCallback<&PpProfilerImpl::handleFileChange, void, cpp_reader *, const line_map_ordinary *>;
-      mPpCallbacks->used = &handleCallback<&PpProfilerImpl::handleMacroUsed, void, cpp_reader *, location_t, cpp_hashnode *>;
+      mReaderCallbacksAddress->file_change = &dispatchCallback<&PpProfilerImpl::handleFileChange, cpp_reader *, const line_map_ordinary *>;
+      mOurCallbacks.file_change = mReaderCallbacksAddress->file_change;
+
+      mReaderCallbacksAddress->used = &dispatchCallback<&PpProfilerImpl::handleMacroUsed, cpp_reader *, location_t, cpp_hashnode *>;
+      mOurCallbacks.used = mReaderCallbacksAddress->used;
+
+      mReaderCallbacksAddress->used_define = &dispatchCallback<&PpProfilerImpl::handleMacroUsed, cpp_reader *, location_t, cpp_hashnode *>;
+      mOurCallbacks.used_define = mReaderCallbacksAddress->used_define;
+      
+
+      if(mOriginalCallbacks.line_change != nullptr) {
+        mReaderCallbacksAddress->line_change = &dispatchCallback<&PpProfilerImpl::proxyCallback<&cpp_callbacks::line_change, cpp_reader *, const cpp_token *, int>, cpp_reader *, const cpp_token *, int>;
+        mOurCallbacks.line_change = mReaderCallbacksAddress->line_change;
+      }
 
       mStages.push(Stage{Clock::now(), "Preprocessing", {}});
     }
@@ -70,11 +105,72 @@ private:
   static inline std::unordered_map<cpp_reader *, PpProfilerImpl *> mReadersMapping;
 
   const Options mOptions;
-  std::optional<cpp_callbacks> mPpCallbacksChain;
+  cpp_callbacks mOriginalCallbacks;
+  cpp_callbacks mOurCallbacks;
   cpp_reader *mReader{nullptr};
-  cpp_callbacks *mPpCallbacks{nullptr};
+  cpp_callbacks *mReaderCallbacksAddress{nullptr};
   std::stack<Stage> mStages;
   std::unordered_map<std::string, std::size_t> mHeadersVisits;
+  TimePoint mLastCallbackTimestamp{Clock::now()};
+  TimePoint mSecondToLastCallbackTimestamp{Clock::now()};
+  CallbackInfo mLastCallbackInfo;
+
+
+  //We do not need non-void callbacks for now and it would complicate code a fair bit,
+  //so we do not support that case yet
+  template <auto HandlerV, typename... ArgsT>
+  static void dispatchCallback(ArgsT... args)
+  {
+    if(parse_in == nullptr) {
+      logError("fatal error: reader is not set, abnormal termination...");
+      std::abort();
+    }
+
+    auto it = mReadersMapping.find(parse_in);
+    if(it == mReadersMapping.end()) {
+      logError("fatal error: reader is not found, abnormal termination...");
+      std::abort();
+    }
+
+    auto obj = it->second;
+    try {
+      obj->handleCallback<HandlerV>(args...);
+    } catch(...) {
+      //It is really hard to make this whole class exception safe, so we better stop on exception
+      obj->cleanup();
+      throw;
+    }
+  }
+
+  template <auto HandlerV, typename... ArgsT>
+  void handleCallback(ArgsT... args)
+  {
+    auto now = Clock::now();
+    if(std::holds_alternative<UsedInfo>(mLastCallbackInfo)) {
+      auto &usedInfo = std::get<UsedInfo>(mLastCallbackInfo);
+      auto &stage = mStages.top();
+      auto it = stage.records.find(usedInfo.name);
+      if(it == stage.records.end()) {
+        auto [newIt, inserted] = stage.records.insert(std::make_pair(usedInfo.name, nanoseconds::zero()));
+        it = newIt;
+      }
+      it->second += measure(mSecondToLastCallbackTimestamp, now);
+    }
+
+    (this->*HandlerV)(args...);
+    mSecondToLastCallbackTimestamp = mLastCallbackTimestamp;
+    mLastCallbackTimestamp = Clock::now();
+  }
+
+  template <auto HandlerV, typename... ArgsT>
+  void proxyCallback(ArgsT... args)
+  {
+    if((mOriginalCallbacks.*HandlerV) != nullptr) {
+      (mOriginalCallbacks.*HandlerV)(args...);
+    }
+    
+    mLastCallbackInfo = std::monostate{};
+  }
 
 
   void cleanup() noexcept {
@@ -93,33 +189,47 @@ private:
     }
 
     auto ppCallbacks = cpp_get_callbacks(mReader);
-    if(mPpCallbacks != ppCallbacks) {
-      logError("fatal error: preprocessor callbacks, abnormal termination...");
+    if(mReaderCallbacksAddress != ppCallbacks) {
+      logError("fatal error: reader callbacks pointer changed, abnormal termination...");
       std::abort();
     }
 
-    if(mPpCallbacks->file_change != &handleCallback<&PpProfilerImpl::handleFileChange, void, cpp_reader *, const line_map_ordinary *>) {
-      logError("fatal error: preprocessor callbacks, abnormal termination...");
+    if(ppCallbacks->file_change != mOurCallbacks.file_change) {
+      logError("fatal error: reader callbacks were overriden, abnormal termination...");
       std::abort();
     }
-    mPpCallbacks->file_change = mPpCallbacksChain->file_change;
 
-    if(mPpCallbacks->used != &handleCallback<&PpProfilerImpl::handleMacroUsed, void, cpp_reader *, location_t, cpp_hashnode *>) {
-      logError("fatal error: preprocessor callbacks, abnormal termination...");
+    if(ppCallbacks->used != mOurCallbacks.used) {
+      logError("fatal error: reader callbacks were overriden, abnormal termination...");
       std::abort();
     }
-    mPpCallbacks->used = mPpCallbacksChain->used;
+
+    if(ppCallbacks->used_define != mOurCallbacks.used_define) {
+      logError("fatal error: reader callbacks were overriden, abnormal termination...");
+      std::abort();
+    }
+
+    if(ppCallbacks->line_change != mOurCallbacks.line_change) {
+      logError("fatal error: reader callbacks were overriden, abnormal termination...");
+      std::abort();
+    }
+
+    ppCallbacks->file_change = mOriginalCallbacks.file_change;
+    ppCallbacks->used = mOriginalCallbacks.used;
+    ppCallbacks->used_define = mOriginalCallbacks.used_define;
+    ppCallbacks->line_change = mOriginalCallbacks.line_change;
 
     mReadersMapping.erase(mReader);
     mReader = nullptr;
-    mPpCallbacks = nullptr;
+    mReaderCallbacksAddress = nullptr;
   }
 
-  void handleMacroUsed(cpp_reader *, location_t loc, cpp_hashnode *node)
+  void handleMacroUsed(cpp_reader *, location_t, cpp_hashnode *node)
   {
-    expanded_location xloc = expand_location(loc);
+    auto name = reinterpret_cast<const char *>(NODE_NAME(node));
+    assert(((void)"macro name is null", name != nullptr));
 
-    logInfo("macro '", NODE_NAME(node), "' at '", xloc.file, ":", xloc.line, ":", xloc.column, "'");
+    mLastCallbackInfo = UsedInfo{name};
   }
 
   void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
@@ -171,37 +281,11 @@ private:
       }
     }
 
-    if(mPpCallbacksChain->file_change != nullptr) {
-      (*mPpCallbacksChain->file_change)(reader, lineMap);
-    }
-  }
-
-  template <auto HandlerV, typename RetT, typename... ArgsT>
-  static RetT handleCallback(ArgsT... args)
-  {
-    if(parse_in == nullptr) {
-      logError("fatal error: reader is not set, abnormal termination...");
-      std::abort();
+    if(mOriginalCallbacks.file_change != nullptr) {
+      (mOriginalCallbacks.file_change)(reader, lineMap);
     }
 
-    auto it = mReadersMapping.find(parse_in);
-    if(it == mReadersMapping.end()) {
-      logError("fatal error: reader is not found, abnormal termination...");
-      std::abort();
-    }
-
-    auto obj = it->second;
-    try {
-      if constexpr(std::is_same_v<void, RetT>) {
-        (obj->*HandlerV)(args...);
-      } else {
-        return (obj->*HandlerV)(args...);
-      }
-    } catch(...) {
-      //It is really hard to make this whole class exception safe, so we better stop on exception
-      obj->cleanup();
-      throw;
-    }
+    mLastCallbackInfo = std::monostate{};
   }
 };
 
