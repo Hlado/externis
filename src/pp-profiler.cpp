@@ -4,6 +4,7 @@
 #include "trace.h"
 #include "utils.h"
 
+#include <array>
 #include <cassert>
 #include <cstring>
 #include <memory>
@@ -37,6 +38,67 @@ struct UsedInfo
 
 using CallbackInfo = std::variant<std::monostate, UsedInfo>;
 
+class HeadersTracker
+{
+public:
+  explicit HeadersTracker(std::shared_ptr<Trace> trace)
+    : mTrace{std::move(trace)}
+  {
+
+  }
+
+private:
+  std::shared_ptr<Trace> mTrace;
+};
+
+class MacroTracker
+{
+public:
+  explicit MacroTracker(std::shared_ptr<Trace> trace)
+    : mTrace{std::move(trace)}
+  {
+
+  }
+
+  void handleUsedKind(cpp_reader *reader, location_t loc, cpp_hashnode *node)
+  {
+    handleLastCallback();
+
+    auto name = reinterpret_cast<const char *>(NODE_NAME(node));
+    assert(((void)"node name is null", name != nullptr));
+
+    mLastCallback = UsedInfo{name};
+
+    uptateTimestamps();
+  }
+
+  void handleLineChange(cpp_reader *, const cpp_token *, int)
+  {
+    handleLastCallback();
+    uptateTimestamps();
+  }
+
+private:
+  std::shared_ptr<Trace> mTrace;
+  std::array<TimePoint, 2> mTimestamps{Clock::now(), Clock::now()};
+  CallbackInfo mLastCallback;
+
+  void handleLastCallback()
+  {
+    auto now = Clock::now();
+    if(std::holds_alternative<UsedInfo>(mLastCallback)) {
+      auto &usedInfo = std::get<UsedInfo>(mLastCallback);
+      mTrace->add(Event{usedInfo.name, measure(mTimestamps[0], now)});
+    }
+  }
+
+  void uptateTimestamps()
+  {
+    mTimestamps[0] = mTimestamps[1];
+    mTimestamps[1] = Clock::now();
+  }
+};
+
 } //unnamed namespace
 
 namespace internal {
@@ -47,7 +109,8 @@ public:
   PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
     : mOptions{options}
     , mReader{parse_in}
-    , mTrace{std::move(trace)}
+    , mTrace{trace}
+    , mMacroTracker{trace}
   {
     if(mReader == nullptr) {
       throw Error{"reader is not set"};
@@ -65,20 +128,14 @@ public:
       mReaderCallbacksAddress->file_change = &dispatchCallback<&PpProfilerImpl::handleFileChange, cpp_reader *, const line_map_ordinary *>;
       mOurCallbacks.file_change = mReaderCallbacksAddress->file_change;
 
-      mReaderCallbacksAddress->used = &dispatchCallback<&PpProfilerImpl::handleMacroUsed, cpp_reader *, location_t, cpp_hashnode *>;
+      mReaderCallbacksAddress->used = &dispatchCallback<&PpProfilerImpl::handleUsed, cpp_reader *, location_t, cpp_hashnode *>;
       mOurCallbacks.used = mReaderCallbacksAddress->used;
 
-      mReaderCallbacksAddress->used_define = &dispatchCallback<&PpProfilerImpl::handleMacroUsed, cpp_reader *, location_t, cpp_hashnode *>;
+      mReaderCallbacksAddress->used_define = &dispatchCallback<&PpProfilerImpl::handleUsedDefine, cpp_reader *, location_t, cpp_hashnode *>;
       mOurCallbacks.used_define = mReaderCallbacksAddress->used_define;
       
-
-      if(mOriginalCallbacks.line_change != nullptr) {
-        mReaderCallbacksAddress->line_change = &dispatchCallback<&PpProfilerImpl::proxyCallback<&cpp_callbacks::line_change, cpp_reader *, const cpp_token *, int>, cpp_reader *, const cpp_token *, int>;
-        mOurCallbacks.line_change = mReaderCallbacksAddress->line_change;
-      }
-
-      mStart = Clock::now();
-      mTrace->push("Preprocessing");
+      mReaderCallbacksAddress->line_change = &dispatchCallback<&PpProfilerImpl::handleLineChange, cpp_reader *, const cpp_token *, int>;
+      mOurCallbacks.line_change = mReaderCallbacksAddress->line_change;
     }
     catch(const std::exception& e)
     {
@@ -104,11 +161,8 @@ private:
   cpp_reader *mReader{nullptr};
   cpp_callbacks *mReaderCallbacksAddress{nullptr};
   std::shared_ptr<Trace> mTrace;
-  TimePoint mStart{Clock::now()};
   std::unordered_map<std::string, std::size_t> mHeadersVisits;
-  TimePoint mLastCallbackTimestamp{Clock::now()};
-  TimePoint mSecondToLastCallbackTimestamp{Clock::now()};
-  CallbackInfo mLastCallbackInfo;
+  MacroTracker mMacroTracker;
 
   //We do not need non-void callbacks for now and it would complicate code a fair bit,
   //so we do not support that case yet
@@ -128,7 +182,7 @@ private:
 
     auto obj = it->second;
     try {
-      obj->handleCallback<HandlerV>(args...);
+      (obj->*HandlerV)(args...);
     } catch(...) {
       //It is really hard to make this whole class exception safe, so we better stop on exception
       obj->cleanup();
@@ -136,30 +190,32 @@ private:
     }
   }
 
-  template <auto HandlerV, typename... ArgsT>
-  void handleCallback(ArgsT... args)
+  void handleLineChange(cpp_reader *reader, const cpp_token *token, int line)
   {
-    auto now = Clock::now();
-    if(std::holds_alternative<UsedInfo>(mLastCallbackInfo)) {
-      auto &usedInfo = std::get<UsedInfo>(mLastCallbackInfo);
-      mTrace->add(Event{usedInfo.name, measure(mSecondToLastCallbackTimestamp, now)});
-    }
+    mMacroTracker.handleLineChange(reader, token, line);
 
-    (this->*HandlerV)(args...);
-    mSecondToLastCallbackTimestamp = mLastCallbackTimestamp;
-    mLastCallbackTimestamp = Clock::now();
+    if(mOriginalCallbacks.line_change != nullptr) {
+      (mOriginalCallbacks.line_change)(reader, token, line);
+    }
   }
 
-  template <auto HandlerV, typename... ArgsT>
-  void proxyCallback(ArgsT... args)
+  void handleUsed(cpp_reader *reader, location_t loc, cpp_hashnode *node)
   {
-    if((mOriginalCallbacks.*HandlerV) != nullptr) {
-      (mOriginalCallbacks.*HandlerV)(args...);
+    mMacroTracker.handleUsedKind(reader, loc, node);
+
+    if(mOriginalCallbacks.used != nullptr) {
+      (mOriginalCallbacks.used)(reader, loc, node);
     }
-    
-    mLastCallbackInfo = std::monostate{};
   }
 
+  void handleUsedDefine(cpp_reader *reader, location_t loc, cpp_hashnode *node)
+  {
+    mMacroTracker.handleUsedKind(reader, loc, node);
+
+    if(mOriginalCallbacks.used_define != nullptr) {
+      (mOriginalCallbacks.used_define)(reader, loc, node);
+    }
+  }
 
   void cleanup() noexcept {
     restorePpCallbacks();
@@ -212,13 +268,7 @@ private:
     mReaderCallbacksAddress = nullptr;
   }
 
-  void handleMacroUsed(cpp_reader *, location_t, cpp_hashnode *node)
-  {
-    auto name = reinterpret_cast<const char *>(NODE_NAME(node));
-    assert(((void)"macro name is null", name != nullptr));
-
-    mLastCallbackInfo = UsedInfo{name};
-  }
+  
 
   void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
   {
@@ -273,8 +323,6 @@ private:
     if(mOriginalCallbacks.file_change != nullptr) {
       (mOriginalCallbacks.file_change)(reader, lineMap);
     }
-
-    mLastCallbackInfo = std::monostate{};
 
     if(lineMap == nullptr) {
       cleanup();
