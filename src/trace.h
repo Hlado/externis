@@ -119,7 +119,7 @@ public:
   std::unordered_map<std::string, std::chrono::nanoseconds> flatten() const {
     std::unordered_map<std::string, std::chrono::nanoseconds> result;
     auto prefix = std::string{};
-    prefix.reserve(0xFFFF);
+    prefix.reserve(2048);
     
     flatten(result, current(), prefix, 0);
 
@@ -172,7 +172,7 @@ private:
     }
 
     for (auto &&level : level.levels) {
-        flatten(out, level, prefix, depth + 1);
+      flatten(out, level, prefix, depth + 1);
     }
 
     prefix.resize(prefixLen);
