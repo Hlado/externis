@@ -37,7 +37,7 @@ int plugin_init(plugin_name_args *args, plugin_gcc_version *runtimeGccVersion)
   register_callback(PLUGIN_NAME.data(), PLUGIN_INFO, nullptr, &info);
 
   if (!plugin_default_version_check(runtimeGccVersion, &gcc_version)) {
-    logError("plugin has been compiled for different gcc version");
+    logError("plugin compiled for different gcc version");
     return 1;
   }
 

@@ -158,11 +158,12 @@ namespace internal {
 
 class PpProfilerImpl {
 public:
-  PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
+  PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler)
   : mOptions{options}
   , mReader{parse_in}
   , mHeadersTracker{trace}
   , mMacroTracker{trace}
+  , mFinishHandler{finishHandler}
   {
     if (mReader == nullptr) {
       throw Error{"reader is not set"};
@@ -211,6 +212,7 @@ private:
   cpp_callbacks mOurCallbacks;
   HeadersTracker mHeadersTracker;
   MacroTracker mMacroTracker;
+  std::function<void()> mFinishHandler;
 
 
   void handleLineChange(cpp_reader *reader, const cpp_token *token, int line)
@@ -231,6 +233,14 @@ private:
   void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
   {
     mHeadersTracker.handleFileChange(reader, lineMap);
+
+    // nullptr means finishing of preprocessing
+    if (lineMap == nullptr) {
+      cleanup();
+      if (mFinishHandler) {
+        mFinishHandler();
+      }
+    }
   }
 
   void cleanup() noexcept
@@ -318,8 +328,8 @@ private:
 
 using internal::PpProfilerImpl;
 
-PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace)
-: mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace))}
+PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace, std::function<void()> finishHandler)
+: mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace), finishHandler)}
 {
 }
 

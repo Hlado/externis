@@ -29,11 +29,6 @@ namespace insight {
 
 namespace {
 
-constexpr auto STAGE_FILE = std::size_t{1};
-constexpr auto STAGE_STEP = std::size_t{2};
-
-enum class Steps { Preprocessing, Parsing, Backend };
-
 std::string getFullInputName()
 {
   if (main_input_filename == nullptr || std::strcmp("", main_input_filename) == 0) {
@@ -53,31 +48,12 @@ public:
   : mOptions{options}
   {
     try {
-      PLUGIN_START_PARSE_FUNCTION;
-      PLUGIN_FINISH_PARSE_FUNCTION;
-      PLUGIN_PASS_MANAGER_SETUP;
-      PLUGIN_FINISH_TYPE;
-      PLUGIN_FINISH_DECL;
-
-      PLUGIN_ALL_PASSES_START;
-      PLUGIN_ALL_PASSES_END;
-      PLUGIN_ALL_IPA_PASSES_START;
-      PLUGIN_ALL_IPA_PASSES_END;
-      PLUGIN_OVERRIDE_GATE;
-      PLUGIN_PASS_EXECUTION;
-      PLUGIN_EARLY_GIMPLE_PASSES_START;
-      PLUGIN_EARLY_GIMPLE_PASSES_END;
-
-
       registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
-      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
-      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handlePluginPassExecution>>(
-        PLUGIN_PASS_EXECUTION);
+      registerCallback<&InstanceImpl::handlePluginPassExecution>(PLUGIN_PASS_EXECUTION);
 
-      //! Order
       mTrace->push(getFullInputName());
       mTrace->push("Preprocessor");
-      mPpProfiler = PpProfiler{options, mTrace};
+      mPpProfiler = PpProfiler{options, mTrace, std::bind(&InstanceImpl::handlePreprocessingFinish, this)};
     } catch (const std::exception &e) {
       cleanup();
       throw;
@@ -93,13 +69,12 @@ public:
   }
 
 private:
+  enum class Level { Stages };
+
   const Options mOptions;
-  //! Order
   std::shared_ptr<Trace> mTrace{std::make_shared<Trace>()};
   std::optional<PpProfiler> mPpProfiler;
   std::optional<BackendProfiler> mBackendProfiler;
-  Steps mStep{Steps::Preprocessing};
-
 
   static void unregisterCallback(int event) noexcept
   {
@@ -112,74 +87,43 @@ private:
     unregisterCallback(PLUGIN_PASS_EXECUTION);
   }
 
-  template <void (InstanceImpl::*HandlerV)(void *)>
-  static void handleCallback(void *gccData, void *userData)
-  {
-    auto obj = static_cast<InstanceImpl *>(userData);
-
-    try {
-      (obj->*HandlerV)(gccData);
-    } catch (...) {
-      // It is really hard to make this whole class exception safe, so we better stop on exception
-      obj->cleanup();
-      throw;
-    }
-  }
-
   void cleanup() noexcept
   {
+    mPpProfiler.reset();
+    mBackendProfiler.reset();
     unregisterCallbacks();
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
   void registerCallback(int event)
   {
-    register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&handleCallback<HandlerV>>, this);
+    register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&dispatchCallback<HandlerV>>, this);
   }
 
-  template <void (InstanceImpl::*HandlerV)(void *)>
-  void handleParserCallback(void *gccData)
+  std::size_t levelDepth(Level desiredLevel)
   {
-    if (mStep == Steps::Preprocessing) {
-      // Release preprocessor callbacks
-      mPpProfiler.reset();
-      mStep = Steps::Parsing;
-      collapse(*mTrace, 1);
-      mTrace->push("Parser");
-    }
-    if (mStep != Steps::Parsing) {
-      throw Error{"parsing callback happened at the wrong step (",
-                  static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
-    }
-
-    (this->*HandlerV)(gccData);
+    switch (desiredLevel) {
+    case Level::Stages:
+      return 1; // May be altered by CLI option later
+    default:
+      assert(((void)"unknown level", false));
+    };
   }
 
-  template <void (InstanceImpl::*HandlerV)(void *)>
-  void handleBackendCallback(void *gccData)
+  void handlePreprocessingFinish()
   {
-    if (mStep == Steps::Parsing) {
-      mStep = Steps::Backend;
-      collapse(*mTrace, 1);
-      mTrace->push("Backend");
-      mBackendProfiler = BackendProfiler{mOptions, mTrace};
-    } else {
-      if (mStep != Steps::Backend) {
-        throw Error{"backend callback happened at the wrong step (",
-                    static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
-      }
-    }
-
-    (this->*HandlerV)(gccData);
-  }
-
-  void handleFinishDecl(void *)
-  {
-    // Just to test wrapper callbacks for now
+    collapse(*mTrace, levelDepth(Level::Stages));
+    mTrace->push("Parser");
   }
 
   void handlePluginPassExecution(void *gccData)
   {
+    if (!mBackendProfiler) {
+      collapse(*mTrace, levelDepth(Level::Stages));
+      mTrace->push("Backend");
+      mBackendProfiler = BackendProfiler{mOptions, mTrace};
+    }
+
     mBackendProfiler->handlePassExecution(gccData);
   }
 
@@ -249,6 +193,20 @@ private:
     }
 
     return stream;
+  }
+
+  template <void (InstanceImpl::*HandlerV)(void *)>
+  static void dispatchCallback(void *gccData, void *userData)
+  {
+    auto obj = static_cast<InstanceImpl *>(userData);
+
+    try {
+      (obj->*HandlerV)(gccData);
+    } catch (...) {
+      // It is really hard to make this whole class exception safe, so we better stop on exception
+      obj->cleanup();
+      throw;
+    }
   }
 };
 

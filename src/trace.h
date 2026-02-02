@@ -203,16 +203,19 @@ private:
 // Temporary helper
 inline void collapse(Trace &trace, std::size_t desiredDepth)
 {
+  using namespace std::chrono;
+
   assert(((void)"desired depth must not be greater than trace depth", desiredDepth <= trace.depth()));
 
   auto now = Clock::now();
 
   while (trace.depth() >= desiredDepth) {
     auto total = measure(trace.timestamp(), now);
-    auto uncategorized =
-      std::max(std::chrono::nanoseconds{}, std::chrono::nanoseconds{total - trace.duration()});
+    auto uncategorized = std::max(nanoseconds{}, nanoseconds{total - trace.duration()});
 
-    trace.add(Event{"Uncategorized", uncategorized});
+    if (duration_cast<microseconds>(uncategorized) > microseconds{}) {
+      trace.add(Event{"Uncategorized", uncategorized});
+    }
 
     if (trace.depth() == desiredDepth) {
       break;
