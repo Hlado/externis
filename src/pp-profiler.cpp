@@ -11,49 +11,42 @@
 #include <unordered_map>
 #include <variant>
 
-//Always last
+// Always last
 #include "gcc-headers.h"
 
 using namespace std::chrono;
 
-extern struct cpp_reader* parse_in;
+extern struct cpp_reader *parse_in;
 
 namespace insight {
 
 namespace {
 
-enum class CallbackType
-{
-  Other,
-  Used
-};
+enum class CallbackType { Other, Used };
 
-struct UsedInfo
-{
+struct UsedInfo {
   std::string name;
 };
 
 using CallbackInfo = std::variant<std::monostate, UsedInfo>;
 
-class HeadersTracker
-{
+class HeadersTracker {
 public:
   explicit HeadersTracker(std::shared_ptr<Trace> trace)
-    : mTrace{std::move(trace)}
-    , initialDepth{mTrace->depth()}
+  : mTrace{std::move(trace)}
+  , initialDepth{mTrace->depth()}
   {
-
   }
 
   void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
   {
-    if(lineMap == nullptr) {
+    if (lineMap == nullptr) {
       return;
     }
 
-    if(lineMap->reason == LC_ENTER) {
+    if (lineMap->reason == LC_ENTER) {
       handleEnter(lineMap);
-    } else if(lineMap->reason == LC_LEAVE) {
+    } else if (lineMap->reason == LC_LEAVE) {
       handleLeave(lineMap);
     }
   }
@@ -70,8 +63,8 @@ private:
     auto rawName = ORDINARY_MAP_FILE_NAME(lineMap);
     auto name = std::string{UNNAMED_FILE_NAME};
 
-    //Named files require bit of a processing
-    if(rawName != nullptr) {
+    // Named files require bit of a processing
+    if (rawName != nullptr) {
       name = rawName;
       visit(name);
     }
@@ -79,12 +72,12 @@ private:
     mTrace->push(name);
   }
 
-  //We assume that every file has include guard so all occurences except first is instant and we skip them
+  // We assume that every file has include guard so all occurences except first is instant and we skip them
   void visit(const std::string &name)
   {
     auto [it, inserted] = mHeadersVisits.insert(std::make_pair(name, 1));
-    //We don't touch zeroes because it means that file was once processed already
-    if(!inserted && it->second > 0) {
+    // We don't touch zeroes because it means that file was once processed already
+    if (!inserted && it->second > 0) {
       it->second += 1;
     }
   }
@@ -94,16 +87,16 @@ private:
     assert(mTrace->depth() > initialDepth);
 
     auto name = mTrace->name();
-    if(name != UNNAMED_FILE_NAME) {
+    if (name != UNNAMED_FILE_NAME) {
       auto it = mHeadersVisits.find(name);
       assert(it != mHeadersVisits.end());
 
-      if(it->second == 0) { //Skip already processed files
+      if (it->second == 0) { // Skip already processed files
         mTrace->drop();
-      } else if(it->second == 1) { //Leaving header on first occurence
+      } else if (it->second == 1) { // Leaving header on first occurence
         collapse(*mTrace, mTrace->depth() - 1);
         it->second = 0;
-      } else { //Recursive includes on first encounter, skipping nested
+      } else { // Recursive includes on first encounter, skipping nested
         mTrace->drop();
         it->second -= 1;
       }
@@ -113,13 +106,11 @@ private:
   }
 };
 
-class MacroTracker
-{
+class MacroTracker {
 public:
   explicit MacroTracker(std::shared_ptr<Trace> trace)
-    : mTrace{std::move(trace)}
+  : mTrace{std::move(trace)}
   {
-
   }
 
   void handleUsedKind(cpp_reader *reader, location_t loc, cpp_hashnode *node)
@@ -148,7 +139,7 @@ private:
   void handleLastCallback()
   {
     auto now = Clock::now();
-    if(std::holds_alternative<UsedInfo>(mLastCallback)) {
+    if (std::holds_alternative<UsedInfo>(mLastCallback)) {
       auto &usedInfo = std::get<UsedInfo>(mLastCallback);
       mTrace->add(Event{usedInfo.name, measure(mTimestamps[0], now)});
     }
@@ -161,45 +152,42 @@ private:
   }
 };
 
-} //unnamed namespace
+} // unnamed namespace
 
 namespace internal {
 
-class PpProfilerImpl
-{
+class PpProfilerImpl {
 public:
   PpProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
-    : mOptions{options}
-    , mReader{parse_in}
-    , mHeadersTracker{trace}
-    , mMacroTracker{trace}
+  : mOptions{options}
+  , mReader{parse_in}
+  , mHeadersTracker{trace}
+  , mMacroTracker{trace}
   {
-    if(mReader == nullptr) {
+    if (mReader == nullptr) {
       throw Error{"reader is not set"};
     }
     mReaderCallbacks = cpp_get_callbacks(mReader);
-    if(mReaderCallbacks == nullptr) {
+    if (mReaderCallbacks == nullptr) {
       throw Error{"preprocessor callbacks are empty"};
     }
     mOriginalCallbacks = *mReaderCallbacks;
     mOurCallbacks = mOriginalCallbacks;
     mReadersMapping[mReader] = this;
 
-    try
-    {
-      #define INSIGHT_PPP_SET_CALLBACK(handler, callback, ...)                                                                                             \
-        mReaderCallbacks->callback = &dispatchCallback<&PpProfilerImpl::handleCallback<&PpProfilerImpl::handler, &cpp_callbacks::callback , __VA_ARGS__>>; \
-        mOurCallbacks.callback = mReaderCallbacks->callback;
+    try {
+#define INSIGHT_PPP_SET_CALLBACK(handler, callback, ...)                                                                 \
+  mReaderCallbacks->callback =                                                                                           \
+    &dispatchCallback<&PpProfilerImpl::handleCallback<&PpProfilerImpl::handler, &cpp_callbacks::callback, __VA_ARGS__>>; \
+  mOurCallbacks.callback = mReaderCallbacks->callback;
 
       INSIGHT_PPP_SET_CALLBACK(handleFileChange, file_change, cpp_reader *, const line_map_ordinary *);
       INSIGHT_PPP_SET_CALLBACK(handleLineChange, line_change, cpp_reader *, const cpp_token *, int);
       INSIGHT_PPP_SET_CALLBACK(handleUsed, used, cpp_reader *, location_t, cpp_hashnode *);
       INSIGHT_PPP_SET_CALLBACK(handleUsedDefine, used_define, cpp_reader *, location_t, cpp_hashnode *);
 
-      #undef INSIGHT_PPP_SET_CALLBACK
-    }
-    catch(const std::exception& e)
-    {
+#undef INSIGHT_PPP_SET_CALLBACK
+    } catch (const std::exception &e) {
       cleanup();
       throw;
     }
@@ -245,7 +233,8 @@ private:
     mHeadersTracker.handleFileChange(reader, lineMap);
   }
 
-  void cleanup() noexcept {
+  void cleanup() noexcept
+  {
     restorePpCallbacks();
 
     mReadersMapping.erase(mReader);
@@ -255,20 +244,20 @@ private:
 
   void restorePpCallbacks() noexcept
   {
-    if(mReader == nullptr) {
+    if (mReader == nullptr) {
       return;
     }
-    
-    if(mReader != parse_in) {
+
+    if (mReader != parse_in) {
       logError("fatal error: reader changed, abnormal termination...");
       std::abort();
     }
 
-    if(mReaderCallbacks != cpp_get_callbacks(mReader)) {
+    if (mReaderCallbacks != cpp_get_callbacks(mReader)) {
       logError("fatal error: reader callbacks pointer changed, abnormal termination...");
       std::abort();
     }
-    
+
     restoreCallback<&cpp_callbacks::file_change>();
     restoreCallback<&cpp_callbacks::line_change>();
     restoreCallback<&cpp_callbacks::used>();
@@ -280,25 +269,25 @@ private:
   {
     auto ppCallbacks = cpp_get_callbacks(mReader);
 
-    if(ppCallbacks->*CallbackV != mOurCallbacks.*CallbackV) {
+    if (ppCallbacks->*CallbackV != mOurCallbacks.*CallbackV) {
       logError("fatal error: reader callback was overwritten, abnormal termination...");
       std::abort();
     }
     ppCallbacks->*CallbackV = mOriginalCallbacks.*CallbackV;
   }
 
-  //We do not need non-void callbacks for now and it would complicate code a fair bit,
-  //so we do not support that case yet
+  // We do not need non-void callbacks for now and it would complicate code a fair bit,
+  // so we do not support that case yet
   template <auto HandlerV, typename... ArgsT>
   static void dispatchCallback(ArgsT... args)
   {
-    if(parse_in == nullptr) {
+    if (parse_in == nullptr) {
       logError("fatal error: reader is not set, abnormal termination...");
       std::abort();
     }
 
     auto it = mReadersMapping.find(parse_in);
-    if(it == mReadersMapping.end()) {
+    if (it == mReadersMapping.end()) {
       logError("fatal error: reader is not found, abnormal termination...");
       std::abort();
     }
@@ -306,8 +295,8 @@ private:
     auto obj = it->second;
     try {
       (obj->*HandlerV)(args...);
-    } catch(...) {
-      //It is really hard to make this whole class exception safe, so we better stop on exception
+    } catch (...) {
+      // It is really hard to make this whole class exception safe, so we better stop on exception
       obj->cleanup();
       throw;
     }
@@ -319,24 +308,23 @@ private:
     (this->*HandlerV)(args...);
 
     auto oh = mOriginalCallbacks.*OriginalHandlerV;
-    if(oh != nullptr) {
+    if (oh != nullptr) {
       oh(args...);
     }
   }
 };
 
-} //namespace internal
+} // namespace internal
 
 using internal::PpProfilerImpl;
 
 PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace)
-  : mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace))}
+: mImpl{std::make_unique<PpProfilerImpl>(options, std::move(trace))}
 {
-
 }
 
 PpProfiler::PpProfiler(PpProfiler &&) = default;
 PpProfiler &PpProfiler::operator=(PpProfiler &&) = default;
 PpProfiler::~PpProfiler() = default;
 
-} //namespace insight
+} // namespace insight

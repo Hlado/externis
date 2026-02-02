@@ -53,7 +53,7 @@ public:
     return current().duration;
   }
 
-  //Zero-based, zero after creation
+  // Zero-based, zero after creation
   std::size_t depth() const
   {
     assert(!frontier.empty());
@@ -90,7 +90,7 @@ public:
     auto &level = current();
 
     auto duration = event.duration;
-    //order is important for exception safety
+    // order is important for exception safety
     level.events.push_back(std::move(event));
     level.duration += duration;
   }
@@ -99,28 +99,31 @@ public:
   // The other Trace must be at zero depth.
   void merge(Trace &&other)
   {
-    if(this == &other) {
+    if (this == &other) {
       throw Error("can't merge trace with itself");
     }
 
     auto &level = current();
-    level.events.insert(level.events.end(), std::make_move_iterator(other.root->events.begin()), std::make_move_iterator(other.root->events.end()));
-    level.levels.insert(level.levels.end(), std::make_move_iterator(other.root->levels.begin()), std::make_move_iterator(other.root->levels.end()));
+    level.events.insert(level.events.end(), std::make_move_iterator(other.root->events.begin()),
+                        std::make_move_iterator(other.root->events.end()));
+    level.levels.insert(level.levels.end(), std::make_move_iterator(other.root->levels.begin()),
+                        std::make_move_iterator(other.root->levels.end()));
   }
 
-  //Pops levels until depth is as desired. Does nothing if current depth is already equal or less than desired
+  // Pops levels until depth is as desired. Does nothing if current depth is already equal or less than desired
   void collapse(std::size_t desiredDepth = 0)
   {
-    while(depth() > desiredDepth) {
+    while (depth() > desiredDepth) {
       pop();
     }
   }
 
-  std::unordered_map<std::string, std::chrono::nanoseconds> flatten() const {
+  std::unordered_map<std::string, std::chrono::nanoseconds> flatten() const
+  {
     std::unordered_map<std::string, std::chrono::nanoseconds> result;
     auto prefix = std::string{};
     prefix.reserve(2048);
-    
+
     flatten(result, current(), prefix, 0);
 
     return result;
@@ -136,7 +139,7 @@ private:
   };
 
   std::unique_ptr<Level> root{std::make_unique<Level>()};
-  //Default allocators always equal, so it's safe to assume that pointers stay the same on move
+  // Default allocators always equal, so it's safe to assume that pointers stay the same on move
   std::stack<Level *> frontier;
 
   bool rooted() const
@@ -146,7 +149,7 @@ private:
 
   Level &current()
   {
-    return const_cast<Level &>(static_cast<const Trace&>(*this).current());
+    return const_cast<Level &>(static_cast<const Trace &>(*this).current());
   }
 
   const Level &current() const
@@ -155,19 +158,23 @@ private:
     return *frontier.top();
   }
 
-  void flatten(std::unordered_map<std::string, std::chrono::nanoseconds> &out, const Level &level, std::string& prefix, std::size_t depth) const
+  void flatten(std::unordered_map<std::string, std::chrono::nanoseconds> &out,
+               const Level &level,
+               std::string &prefix,
+               std::size_t depth) const
   {
     if (depth >= 1000) {
-        throw Error("recursion depth exceeded limit");
+      throw Error("recursion depth exceeded limit");
     }
 
     std::size_t prefixLen{prefix.size()};
-    if(&level != &current()) {
+    if (&level != &current()) {
       prefix += level.name + ";";
     }
 
-    for(auto &&event : level.events) {
-      auto [it, inserted] = out.insert(std::make_pair(prefix + normalizeName(event.name), std::chrono::nanoseconds{}));
+    for (auto &&event : level.events) {
+      auto [it, inserted] =
+        out.insert(std::make_pair(prefix + normalizeName(event.name), std::chrono::nanoseconds{}));
       it->second += event.duration;
     }
 
@@ -180,34 +187,34 @@ private:
 
   void assert_rooted() const
   {
-    if(!rooted()) {
+    if (!rooted()) {
       throw Error("depth is not zero");
     }
   }
 
   void assert_not_rooted() const
   {
-    if(rooted()) {
+    if (rooted()) {
       throw Error("depth is zero");
     }
   }
 };
 
-//Temporary helper
+// Temporary helper
 inline void collapse(Trace &trace, std::size_t desiredDepth)
 {
   assert(((void)"desired depth must not be greater than trace depth", desiredDepth <= trace.depth()));
 
   auto now = Clock::now();
 
-  while(trace.depth() >= desiredDepth)
-  {
+  while (trace.depth() >= desiredDepth) {
     auto total = measure(trace.timestamp(), now);
-    auto uncategorized = std::max(std::chrono::nanoseconds{} , std::chrono::nanoseconds{total - trace.duration()});
+    auto uncategorized =
+      std::max(std::chrono::nanoseconds{}, std::chrono::nanoseconds{total - trace.duration()});
 
     trace.add(Event{"Uncategorized", uncategorized});
-    
-    if(trace.depth() == desiredDepth) {
+
+    if (trace.depth() == desiredDepth) {
       break;
     }
 
@@ -215,4 +222,4 @@ inline void collapse(Trace &trace, std::size_t desiredDepth)
   };
 }
 
-} //namespace insight
+} // namespace insight

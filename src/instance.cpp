@@ -20,7 +20,7 @@
 #include <type_traits>
 #include <unordered_map>
 
-//Always last
+// Always last
 #include "gcc-headers.h"
 
 using namespace std::chrono;
@@ -32,32 +32,27 @@ namespace {
 constexpr auto STAGE_FILE = std::size_t{1};
 constexpr auto STAGE_STEP = std::size_t{2};
 
-enum class Steps {
-  Preprocessing,
-  Parsing,
-  Backend
-};
+enum class Steps { Preprocessing, Parsing, Backend };
 
 std::string getFullInputName()
 {
-  if(main_input_filename == nullptr || std::strcmp("", main_input_filename) == 0) {
+  if (main_input_filename == nullptr || std::strcmp("", main_input_filename) == 0) {
     return std::string{"unnamed-"} + std::to_string(Clock::now().time_since_epoch().count());
   } else {
     return main_input_filename;
   }
 }
 
-} //unnamed namespace
+} // unnamed namespace
 
 namespace internal {
 
 class InstanceImpl {
 public:
   explicit InstanceImpl(const Options &options)
-    : mOptions{options}
+  : mOptions{options}
   {
-    try
-    {
+    try {
       PLUGIN_START_PARSE_FUNCTION;
       PLUGIN_FINISH_PARSE_FUNCTION;
       PLUGIN_PASS_MANAGER_SETUP;
@@ -74,18 +69,16 @@ public:
       PLUGIN_EARLY_GIMPLE_PASSES_END;
 
 
-
       registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
       registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
-      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handlePluginPassExecution>>(PLUGIN_PASS_EXECUTION);
+      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handlePluginPassExecution>>(
+        PLUGIN_PASS_EXECUTION);
 
-      //!Order
+      //! Order
       mTrace->push(getFullInputName());
       mTrace->push("Preprocessor");
       mPpProfiler = PpProfiler{options, mTrace};
-    }
-    catch(const std::exception& e)
-    {
+    } catch (const std::exception &e) {
       cleanup();
       throw;
     }
@@ -101,7 +94,7 @@ public:
 
 private:
   const Options mOptions;
-  //!Order
+  //! Order
   std::shared_ptr<Trace> mTrace{std::make_shared<Trace>()};
   std::optional<PpProfiler> mPpProfiler;
   std::optional<BackendProfiler> mBackendProfiler;
@@ -126,34 +119,37 @@ private:
 
     try {
       (obj->*HandlerV)(gccData);
-    } catch(...) {
-      //It is really hard to make this whole class exception safe, so we better stop on exception
+    } catch (...) {
+      // It is really hard to make this whole class exception safe, so we better stop on exception
       obj->cleanup();
       throw;
     }
   }
 
-  void cleanup() noexcept {
+  void cleanup() noexcept
+  {
     unregisterCallbacks();
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
-  void registerCallback(int event) {
+  void registerCallback(int event)
+  {
     register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&handleCallback<HandlerV>>, this);
   }
 
   template <void (InstanceImpl::*HandlerV)(void *)>
   void handleParserCallback(void *gccData)
   {
-    if(mStep == Steps::Preprocessing) {
-      //Release preprocessor callbacks
+    if (mStep == Steps::Preprocessing) {
+      // Release preprocessor callbacks
       mPpProfiler.reset();
       mStep = Steps::Parsing;
       collapse(*mTrace, 1);
       mTrace->push("Parser");
     }
-    if(mStep != Steps::Parsing) {
-      throw Error{"parsing callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
+    if (mStep != Steps::Parsing) {
+      throw Error{"parsing callback happened at the wrong step (",
+                  static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
     }
 
     (this->*HandlerV)(gccData);
@@ -162,25 +158,28 @@ private:
   template <void (InstanceImpl::*HandlerV)(void *)>
   void handleBackendCallback(void *gccData)
   {
-    if(mStep == Steps::Parsing) {
+    if (mStep == Steps::Parsing) {
       mStep = Steps::Backend;
       collapse(*mTrace, 1);
       mTrace->push("Backend");
       mBackendProfiler = BackendProfiler{mOptions, mTrace};
     } else {
-      if(mStep != Steps::Backend) {
-        throw Error{"backend callback happened at the wrong step (", static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
+      if (mStep != Steps::Backend) {
+        throw Error{"backend callback happened at the wrong step (",
+                    static_cast<std::underlying_type_t<Steps>>(mStep), ")"};
       }
     }
 
     (this->*HandlerV)(gccData);
   }
 
-  void handleFinishDecl(void *) {
-    //Just to test wrapper callbacks for now
+  void handleFinishDecl(void *)
+  {
+    // Just to test wrapper callbacks for now
   }
 
-  void handlePluginPassExecution(void *gccData) {
+  void handlePluginPassExecution(void *gccData)
+  {
     mBackendProfiler->handlePassExecution(gccData);
   }
 
@@ -193,17 +192,17 @@ private:
     auto collapsed = mTrace->flatten();
 
     std::shared_ptr<std::ostream> individual = getIndividualStream();
-    if(individual) {
+    if (individual) {
       dump(collapsed, *individual);
-      if(individual->fail()) {
+      if (individual->fail()) {
         throw Error{"failed to dump individual trace"};
       }
     }
 
     std::shared_ptr<std::ostream> combined = getCombinedStream();
-    if(combined) {
+    if (combined) {
       dump(collapsed, *combined);
-       if(combined->fail()) {
+      if (combined->fail()) {
         throw Error{"failed to dump combined trace"};
       }
     }
@@ -215,17 +214,17 @@ private:
   {
     std::shared_ptr<std::ostream> stream;
 
-    if(!mOptions.noIndividual) {
-      if(!std::filesystem::exists(main_input_filename)) {
+    if (!mOptions.noIndividual) {
+      if (!std::filesystem::exists(main_input_filename)) {
         logInfo("input is not a file, dumping to cout");
-        stream = std::shared_ptr<std::ostream>{&std::cout, [](auto &&){}};
+        stream = std::shared_ptr<std::ostream>{&std::cout, [](auto &&) {}};
       } else {
         auto dumpPath = std::filesystem::path{dump_base_name};
         dumpPath += ".trace.collapsed";
 
         logInfo("dumping to '", dumpPath.string(), "'");
         stream = std::make_shared<std::ofstream>(dumpPath);
-        if(stream->fail()) {
+        if (stream->fail()) {
           throw Error{"failed to open '", dumpPath.string(), "'"};
         }
       }
@@ -238,12 +237,12 @@ private:
   {
     std::shared_ptr<std::ostream> stream;
 
-    if(!mOptions.noIndividual) {
-      if(!mOptions.combined.empty()) {
+    if (!mOptions.noIndividual) {
+      if (!mOptions.combined.empty()) {
         logInfo("dumping combined to '", mOptions.combined.string(), "'");
-        
+
         stream = std::make_shared<std::ofstream>(mOptions.combined, std::ios_base::app);
-        if(stream->fail()) {
+        if (stream->fail()) {
           throw Error{"failed to open '", mOptions.combined.string(), "'"};
         }
       }
@@ -253,18 +252,17 @@ private:
   }
 };
 
-} //namespace internal
+} // namespace internal
 
 using internal::InstanceImpl;
 
 Instance::Instance(const Options &options)
-  : mImpl{std::make_unique<InstanceImpl>(options)}
+: mImpl{std::make_unique<InstanceImpl>(options)}
 {
-
 }
 
 Instance::Instance(Instance &&) = default;
 Instance &Instance::operator=(Instance &&) = default;
 Instance::~Instance() = default;
 
-} //namespace insight
+} // namespace insight

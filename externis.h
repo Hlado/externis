@@ -32,8 +32,10 @@ namespace externis {
 // Those are aliases so they're easily replacable with something else (like
 // absl::flat_hash_map) if needed. Not doing it by default to keep minimal
 // dependencies.
-template <class Key, class Value> using map_t = std::unordered_map<Key, Value>;
-template <class Value> using set_t = std::unordered_set<Value>;
+template <class Key, class Value>
+using map_t = std::unordered_map<Key, Value>;
+template <class Value>
+using set_t = std::unordered_set<Value>;
 
 using clock_t = std::chrono::high_resolution_clock;
 using time_point_t = std::chrono::time_point<clock_t>;
@@ -45,10 +47,9 @@ struct TimeSpan {
   int64_t end;
 };
 
-inline TimeStamp ns_from_start() {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(clock_t::now() -
-                                                              COMPILATION_START)
-      .count();
+inline TimeStamp ns_from_start()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(clock_t::now() - COMPILATION_START).count();
 }
 
 enum EventCategory {

@@ -4,11 +4,11 @@
 
 #include <string>
 
-//Always last
+// Always last
 #include "gcc-headers.h"
 
 namespace insight {
 
 std::string getFunctionId(tree decl, Verbosity verbosity = Verbosity::Default);
 
-} //namespace insight
+} // namespace insight

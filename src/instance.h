@@ -8,7 +8,7 @@ namespace internal {
 
 class InstanceImpl;
 
-} //namespace internal
+} // namespace internal
 
 struct Options;
 
@@ -23,4 +23,4 @@ private:
   std::unique_ptr<internal::InstanceImpl> mImpl;
 };
 
-} //namespace insight
+} // namespace insight

@@ -50,7 +50,8 @@ map_t<std::string, std::string> normalized_files_map;
 set_t<std::string> normalized_files;
 set_t<std::string> conflicted_files;
 
-void register_include_location(const char *file_name, const char *dir_name) {
+void register_include_location(const char *file_name, const char *dir_name)
+{
   if (file_to_include_directory.count(file_name) == 0) {
     std::string file_std = file_name;
     file_to_include_directory[file_name] = dir_name;
@@ -65,13 +66,13 @@ void register_include_location(const char *file_name, const char *dir_name) {
         normalized_files.insert(normalized_file);
       }
     } else {
-      fprintf(stderr, "Externis warning: Can't normalize paths %s and %s\n",
-              file_name, dir_name);
+      fprintf(stderr, "Externis warning: Can't normalize paths %s and %s\n", file_name, dir_name);
     }
   }
 }
 
-const char *normalized_file_name(const char *file_name) {
+const char *normalized_file_name(const char *file_name)
+{
   if (normalized_files_map.count(file_name) != 0 &&
       conflicted_files.count(normalized_files_map[file_name]) == 0) {
     return normalized_files_map[file_name].data();
@@ -80,7 +81,8 @@ const char *normalized_file_name(const char *file_name) {
   }
 }
 
-EventCategory pass_type(opt_pass_type type) {
+EventCategory pass_type(opt_pass_type type)
+{
   switch (type) {
   case opt_pass_type::GIMPLE_PASS:
     return GIMPLE_PASS;
@@ -111,20 +113,21 @@ std::vector<FunctionEvent> function_events;
 
 } // namespace
 
-void finish_preprocessing_stage() {
+void finish_preprocessing_stage()
+{
   while (!preprocessing_stack.empty()) {
     end_preprocess_file();
     last_function_parsed_ts = ns_from_start();
   }
 }
 
-void start_preprocess_file(const char *file_name, cpp_reader *pfile) {
+void start_preprocess_file(const char *file_name, cpp_reader *pfile)
+{
   auto now = ns_from_start();
   if (!file_name || !strcmp(file_name, "<command-line>")) {
     return;
   }
-  if (preprocess_start.count(file_name) != 0 &&
-      preprocess_end.count(file_name) == 0) {
+  if (preprocess_start.count(file_name) != 0 && preprocess_end.count(file_name) == 0) {
     // This is an edge case - this means that file_name is somewhere down the
     // stack and we have a circular include. Big fun!
     // Because we don't want to add the inner include, we replace file_name
@@ -149,8 +152,7 @@ void start_preprocess_file(const char *file_name, cpp_reader *pfile) {
       register_include_location(real_file_name, real_dir_name);
     } else {
       if (strcmp(dir->name, "")) {
-        fprintf(stderr, "Externis error! Couldn't call realpath(\"%s\")\n",
-                dir->name);
+        fprintf(stderr, "Externis error! Couldn't call realpath(\"%s\")\n", dir->name);
       }
     }
     if (real_dir_name) {
@@ -162,7 +164,8 @@ void start_preprocess_file(const char *file_name, cpp_reader *pfile) {
   }
 }
 
-void end_preprocess_file() {
+void end_preprocess_file()
+{
   auto now = ns_from_start();
   if (preprocess_end.count(preprocessing_stack.top()) == 0) {
     preprocess_end[preprocessing_stack.top()] = now;
@@ -171,21 +174,20 @@ void end_preprocess_file() {
   last_function_parsed_ts = now + 3;
 }
 
-void write_preprocessing_events() {
+void write_preprocessing_events()
+{
   finish_preprocessing_stage(); // Should've already happened, but in any case.
   for (const auto &[file, start] : preprocess_start) {
     if (file == CIRCULAR_POISON_VALUE) {
       continue;
     }
     int64_t end = preprocess_end.at(file);
-    add_event(TraceEvent{normalized_file_name(file.data()),
-                         EventCategory::PREPROCESS,
-                         {start, end},
-                         std::nullopt});
+    add_event(TraceEvent{normalized_file_name(file.data()), EventCategory::PREPROCESS, {start, end}, std::nullopt});
   }
 }
 
-void start_opt_pass(const opt_pass *pass) {
+void start_opt_pass(const opt_pass *pass)
+{
   auto now = ns_from_start();
   last_pass.ts.end = now;
   if (last_pass.pass) {
@@ -195,16 +197,17 @@ void start_opt_pass(const opt_pass *pass) {
   last_pass.ts.start = now + 1;
 }
 
-void write_opt_pass_events() {
+void write_opt_pass_events()
+{
   for (const auto &event : pass_events) {
     map_t<std::string, std::string> args;
     args["static_pass_number"] = std::to_string(event.pass->static_pass_number);
-    add_event(TraceEvent{event.pass->name, pass_type(event.pass->type),
-                         event.ts, std::move(args)});
+    add_event(TraceEvent{event.pass->name, pass_type(event.pass->type), event.ts, std::move(args)});
   }
 }
 
-void end_parse_function(FinishedFunction info) {
+void end_parse_function(FinishedFunction info)
+{
   static bool did_last_function_have_scope = false;
   TimeStamp now = ns_from_start();
 
@@ -216,12 +219,10 @@ void end_parse_function(FinishedFunction info) {
   function_events.push_back(FunctionEvent{info.name, info.file_name, ts});
 
   if (info.scope_name) {
-    if (!scope_events.empty() && did_last_function_have_scope &&
-        scope_events.back().name == info.scope_name) {
+    if (!scope_events.empty() && did_last_function_have_scope && scope_events.back().name == info.scope_name) {
       scope_events.back().ts.end = ts.end + 1;
     } else {
-      scope_events.push_back(ScopeEvent{info.scope_name, info.scope_type,
-                                TimeSpan{ts.start - 1, ts.end + 1}});
+      scope_events.push_back(ScopeEvent{info.scope_name, info.scope_type, TimeSpan{ts.start - 1, ts.end + 1}});
     }
     did_last_function_have_scope = true;
   } else {
@@ -229,18 +230,19 @@ void end_parse_function(FinishedFunction info) {
   }
 }
 
-void write_all_scopes() {
+void write_all_scopes()
+{
   for (const auto &[name, type, ts] : scope_events) {
     add_event(TraceEvent{name.data(), type, ts, std::nullopt});
   }
 }
 
-void write_all_functions() {
+void write_all_functions()
+{
   for (const auto &[name, file_name, ts] : function_events) {
     map_t<std::string, std::string> args;
     args["file"] = normalized_file_name(file_name);
-    add_event(
-        TraceEvent{name.data(), EventCategory::FUNCTION, ts, std::move(args)});
+    add_event(TraceEvent{name.data(), EventCategory::FUNCTION, ts, std::move(args)});
   }
 }
 } // namespace externis

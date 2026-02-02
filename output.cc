@@ -27,7 +27,7 @@ namespace json {
 using float_number = number;
 using integer_number = number;
 
-}
+} // namespace json
 #endif
 
 namespace externis {
@@ -40,22 +40,22 @@ json::object *output_json;
 json::array *output_events_list;
 static std::FILE *trace_file;
 
-const char *category_string(EventCategory cat) {
-  static const char *strings[10] = {
-      "TU",          "PREPROCESS", "FUNCTION",        "STRUCT",  "NAMESPACE",
-      "GIMPLE_PASS", "RTL_PASS",   "SIMPLE_IPA_PASS", "IPA_PAS", "UNKNOWN"};
+const char *category_string(EventCategory cat)
+{
+  static const char *strings[10] = {"TU",        "PREPROCESS",  "FUNCTION", "STRUCT",
+                                    "NAMESPACE", "GIMPLE_PASS", "RTL_PASS", "SIMPLE_IPA_PASS",
+                                    "IPA_PAS",   "UNKNOWN"};
   return strings[(int)cat];
 }
 
-json::object *new_event(const TraceEvent &event, int pid, int tid, TimeStamp ts,
-                        const char *phase, int this_uid) {
+json::object *new_event(const TraceEvent &event, int pid, int tid, TimeStamp ts, const char *phase, int this_uid)
+{
   json::object *json_event = new json::object;
   json_event->set("name", new json::string(event.name));
   json_event->set("ph", new json::string(phase));
   json_event->set("cat", new json::string(category_string(event.category)));
   // Timestamps are in nanoseconds, JSON format is in microseconds.
-  json_event->set("ts",
-                  new json::float_number(static_cast<double>(ts) * 0.001L));
+  json_event->set("ts", new json::float_number(static_cast<double>(ts) * 0.001L));
   json_event->set("pid", new json::integer_number(pid));
   json_event->set("tid", new json::integer_number(tid));
   json::object *args = new json::object();
@@ -70,20 +70,21 @@ json::object *new_event(const TraceEvent &event, int pid, int tid, TimeStamp ts,
 }
 } // namespace
 
-void set_output_file(FILE *file) {
+void set_output_file(FILE *file)
+{
   trace_file = file;
   output_json = new json::object();
   output_json->set("displayTimeUnit", new json::string("ns"));
-  output_json->set("beginningOfTime",
-                   new json::integer_number(
-                       std::chrono::duration_cast<std::chrono::microseconds>(
-                           COMPILATION_START.time_since_epoch())
-                           .count()));
+  output_json->set(
+    "beginningOfTime",
+    new json::integer_number(
+      std::chrono::duration_cast<std::chrono::microseconds>(COMPILATION_START.time_since_epoch()).count()));
   output_events_list = new json::array();
   output_json->set("traceEvents", output_events_list);
 }
 
-void add_event(const TraceEvent &event) {
+void add_event(const TraceEvent &event)
+{
   static int pid = getpid();
   static int tid = 0;
   static int UID = 0;
@@ -91,17 +92,14 @@ void add_event(const TraceEvent &event) {
     return;
   }
   int this_uid = UID++;
-  output_events_list->append(
-      new_event(event, pid, tid, event.ts.start, "B", this_uid));
-  output_events_list->append(
-      new_event(event, pid, tid, event.ts.end, "E", this_uid));
+  output_events_list->append(new_event(event, pid, tid, event.ts.start, "B", this_uid));
+  output_events_list->append(new_event(event, pid, tid, event.ts.end, "E", this_uid));
 }
 
-void write_all_events() {
-  add_event(TraceEvent{main_input_filename ? main_input_filename : "TU",
-                       EventCategory::TU,
-                       {0, ns_from_start()},
-                       std::nullopt});
+void write_all_events()
+{
+  add_event(
+    TraceEvent{main_input_filename ? main_input_filename : "TU", EventCategory::TU, {0, ns_from_start()}, std::nullopt});
   write_preprocessing_events();
   write_opt_pass_events();
   write_all_functions();

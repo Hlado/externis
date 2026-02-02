@@ -6,7 +6,7 @@
 
 #include <chrono>
 
-//Always last
+// Always last
 #include "gcc-headers.h"
 
 using namespace std::chrono;
@@ -22,32 +22,30 @@ const std::string &getPassTypeName(opt_pass_type passType)
   static const auto IPA = std::string{"IPA"};
   static const auto UNKNOWN = std::string{"__UNKNOWN"};
 
-  switch(passType) {
-    case opt_pass_type::GIMPLE_PASS:
-      return GIMPLE;
-    case opt_pass_type::RTL_PASS:
-      return RTL;
-    case opt_pass_type::IPA_PASS:
-      [[fallthrough]];
-    case opt_pass_type::SIMPLE_IPA_PASS:
-      return IPA;
-    default:
-      return UNKNOWN;
+  switch (passType) {
+  case opt_pass_type::GIMPLE_PASS:
+    return GIMPLE;
+  case opt_pass_type::RTL_PASS:
+    return RTL;
+  case opt_pass_type::IPA_PASS:
+    [[fallthrough]];
+  case opt_pass_type::SIMPLE_IPA_PASS:
+    return IPA;
+  default:
+    return UNKNOWN;
   };
 }
 
-} //unnamed namespace
+} // unnamed namespace
 
 namespace internal {
 
-class BackendProfilerImpl
-{
+class BackendProfilerImpl {
 public:
   explicit BackendProfilerImpl(const Options &options, std::shared_ptr<Trace> trace)
-    : mOptions{options}
-    , mTrace{std::move(trace)}
+  : mOptions{options}
+  , mTrace{std::move(trace)}
   {
-
   }
 
   BackendProfilerImpl(const BackendProfilerImpl &) = delete;
@@ -60,9 +58,9 @@ public:
 
     auto &pass = *static_cast<opt_pass *>(gccData);
 
-    if(isFunctionPass(pass.type)) {
+    if (isFunctionPass(pass.type)) {
       handleFunctionPass(pass);
-    } else if(isIpaPass(pass.type)) {
+    } else if (isIpaPass(pass.type)) {
       handleIpaPass(pass);
     } else {
       logWarn("unknown pass type (", pass.type, ")");
@@ -86,7 +84,8 @@ private:
   {
     assert(cfun != nullptr);
 
-    mLastPass = squashLevels({"Function passes", getFunctionId(cfun->decl), getPassTypeName(pass.type), pass.name});
+    mLastPass =
+      squashLevels({"Function passes", getFunctionId(cfun->decl), getPassTypeName(pass.type), pass.name});
   }
 
   void handleIpaPass(opt_pass &pass)
@@ -96,7 +95,7 @@ private:
 
   void handleLastPass()
   {
-    if(!mLastPass.empty()) {
+    if (!mLastPass.empty()) {
       mTrace->add(Event{mLastPass, measure(mTimestamp, Clock::now())});
       mLastPass.clear();
     }
@@ -113,14 +112,13 @@ private:
   }
 };
 
-} //namespace internal
+} // namespace internal
 
 using internal::BackendProfilerImpl;
 
 BackendProfiler::BackendProfiler(const Options &options, std::shared_ptr<Trace> trace)
-  : mImpl{std::make_unique<BackendProfilerImpl>(options, std::move(trace))}
+: mImpl{std::make_unique<BackendProfilerImpl>(options, std::move(trace))}
 {
-
 }
 
 BackendProfiler::BackendProfiler(BackendProfiler &&) = default;
@@ -137,4 +135,4 @@ void BackendProfiler::handlePluginFinish(void *gccData)
   mImpl->handlePluginFinish(gccData);
 }
 
-} //namespace insight
+} // namespace insight

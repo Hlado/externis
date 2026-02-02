@@ -9,7 +9,7 @@ namespace internal {
 
 class PpProfilerImpl;
 
-} //namespace internal
+} // namespace internal
 
 struct Options;
 class Trace;
@@ -25,4 +25,4 @@ private:
   std::unique_ptr<internal::PpProfilerImpl> mImpl;
 };
 
-} //namespace insight
+} // namespace insight

@@ -8,7 +8,7 @@ namespace internal {
 
 class BackendProfilerImpl;
 
-} //namespace internal
+} // namespace internal
 
 struct Options;
 class Trace;
@@ -21,12 +21,12 @@ public:
   ~BackendProfiler();
 
   void handlePassExecution(void *gccData);
-  //Rely on plugin finish only may make last pass measurement inaccurate,
-  //but it looks like goog trade-off for simplicity
+  // Rely on plugin finish only may make last pass measurement inaccurate,
+  // but it looks like goog trade-off for simplicity
   void handlePluginFinish(void *gccData);
 
 private:
   std::unique_ptr<internal::BackendProfilerImpl> mImpl;
 };
 
-} //namespace insight
+} // namespace insight
