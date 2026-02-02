@@ -167,7 +167,7 @@ private:
     }
 
     for(auto &&event : level.events) {
-      auto [it, inserted] = out.insert(std::make_pair(prefix + event.name, std::chrono::nanoseconds{}));
+      auto [it, inserted] = out.insert(std::make_pair(prefix + normalizeName(event.name), std::chrono::nanoseconds{}));
       it->second += event.duration;
     }
 

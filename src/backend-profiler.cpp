@@ -60,9 +60,9 @@ public:
 
     auto &pass = *static_cast<opt_pass *>(gccData);
 
-    if(pass.type == opt_pass_type::GIMPLE_PASS || pass.type == opt_pass_type::RTL_PASS) {
+    if(isFunctionPass(pass.type)) {
       handleFunctionPass(pass);
-    } else if(pass.type == opt_pass_type::IPA_PASS || pass.type == opt_pass_type::SIMPLE_IPA_PASS) {
+    } else if(isIpaPass(pass.type)) {
       handleIpaPass(pass);
     } else {
       logWarn("unknown pass type (", pass.type, ")");
@@ -84,12 +84,14 @@ private:
 
   void handleFunctionPass(opt_pass &pass)
   {
-    mLastPass = getFunctionQualifiedId(cfun->decl) + ";" + getPassTypeName(pass.type) + ";" + pass.name;
+    assert(cfun != nullptr);
+
+    mLastPass = squashLevels({"Function passes", getFunctionId(cfun->decl), getPassTypeName(pass.type), pass.name});
   }
 
   void handleIpaPass(opt_pass &pass)
   {
-    mLastPass = std::string{"IPA;"} + pass.name;
+    mLastPass = squashLevels({"IPA passes", pass.name});
   }
 
   void handleLastPass()
@@ -98,6 +100,16 @@ private:
       mTrace->add(Event{mLastPass, measure(mTimestamp, Clock::now())});
       mLastPass.clear();
     }
+  }
+
+  bool isFunctionPass(opt_pass_type &type)
+  {
+    return type == opt_pass_type::GIMPLE_PASS || type == opt_pass_type::RTL_PASS;
+  }
+
+  bool isIpaPass(opt_pass_type &type)
+  {
+    return type == opt_pass_type::IPA_PASS || type == opt_pass_type::SIMPLE_IPA_PASS;
   }
 };
 

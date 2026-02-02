@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <initializer_list>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <sstream>
 #include <unordered_map>
@@ -17,6 +19,12 @@ namespace insight {
 // our purposes. But this may change in the future.
 using Clock = std::chrono::high_resolution_clock;
 using TimePoint = Clock::time_point;
+
+enum class Verbosity {
+  Minimal,
+  Default,
+  Detailed
+};
 
 class Error : public std::runtime_error {
 public:
@@ -70,6 +78,57 @@ inline void dump(std::unordered_map<std::string, std::chrono::nanoseconds> &coll
     stream << n << " " << duration_cast<microseconds>(d).count() << "\n";
   }
   stream.flush();
+}
+
+template <typename AssociativeContainerT>
+auto mappedValue(const AssociativeContainerT &mapping, const typename AssociativeContainerT::key_type &key)
+{
+  auto it = mapping.find(key);
+  if(it == std::end(mapping)) {
+    throw Error("unknown mapping");
+  }
+  return it->second;
+}
+
+// Some name strings may contain semicolons, which are normally used as separators in
+// .collapsed output. At the same time, we sometimes want to "squash" multiple trace
+// levels into a single name string. To avoid inspection of names at profiling step,
+// we use a special character unlikely to appear in normal names as an internal
+// separator. The final string processing will be done at trace flattening step.
+constexpr auto LSEP = char{0x1F}; // Unit Separator (ASCII control character)
+const auto LSEP_STR = std::string{LSEP};
+
+//Squashes multiple levels in one string using special separators
+inline std::string squashLevels(std::initializer_list<std::string> names)
+{
+  if(names.size() == 0) {
+    return {};
+  }
+
+  auto result = *names.begin();
+  for(auto it = std::next(names.begin()); it != names.end(); ++it) {
+    result += LSEP + *it;
+  }
+
+  return result;
+}
+
+// Replaces semicolons with bars '|' (not ideal but fast and fair solution),
+// and separator characters with semicolon
+inline std::string normalizeName(std::string name)
+{
+  for(auto &c : name) {
+    switch(c) {
+      case ';':
+        c = '|';
+        break;
+      case LSEP:
+        c = ';';
+        break;
+    };
+  }
+
+  return name;
 }
 
 } // namespace insight
