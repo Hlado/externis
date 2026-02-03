@@ -31,6 +31,12 @@ Options parseOptions(const plugin_name_args &args)
         continue;
       }
       options.noIndividual = true;
+    } else if (std::strcmp("no-unit", name) == 0) {
+      if (value != nullptr && std::strcmp("", value) != 0) {
+        logWarn("'no-unit' option value '", value, "' will be ignored");
+        continue;
+      }
+      options.noUnit = true;
     } else if (std::strcmp("with-macros", name) == 0) {
       if (value != nullptr && std::strcmp("", value) != 0) {
         logWarn("'with-macros' option value '", value, "' will be ignored");

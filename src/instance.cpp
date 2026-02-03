@@ -61,7 +61,10 @@ public:
       // Although it's called PLUGIN_FINISH, for multi input case it is called for each translation unit
       registerCallback<&InstanceImpl::handleFinish>(PLUGIN_FINISH);
 
-      mTrace->push(getFullInputName());
+      if (!mOptions.noUnit) {
+        mTrace->push(getFullInputName());
+      }
+
       mTrace->push("Preprocessor");
       mPpProfiler.emplace(options, mTrace, std::bind(&InstanceImpl::handlePreprocessingFinish, this));
     } catch (const std::exception &e) {
@@ -119,11 +122,13 @@ private:
 
   std::size_t levelDepth(Level desiredLevel)
   {
+    auto base = mOptions.noUnit ? std::size_t{1} : std::size_t{0};
+
     switch (desiredLevel) {
     case Level::Stages:
-      return 1; // May be altered by CLI option later
+      return 1 - base;
     default:
-      assert(((void)"unknown level", false));
+      throw Error{"unknown level"};
     };
   }
 
