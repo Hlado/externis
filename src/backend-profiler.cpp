@@ -68,7 +68,7 @@ public:
     mTimestamp = Clock::now();
   }
 
-  void handlePluginFinish(void *gccData)
+  void handleFinishUnit(void *gccData)
   {
     handleLastPass();
   }
@@ -127,9 +127,9 @@ void BackendProfiler::handlePassExecution(void *gccData)
   mImpl->handlePassExecution(gccData);
 }
 
-void BackendProfiler::handlePluginFinish(void *gccData)
+void BackendProfiler::handleFinishUnit(void *gccData)
 {
-  mImpl->handlePluginFinish(gccData);
+  mImpl->handleFinishUnit(gccData);
 }
 
 } // namespace insight

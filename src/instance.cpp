@@ -49,8 +49,14 @@ public:
   : mOptions{options}
   {
     try {
-      registerCallback<&InstanceImpl::handlePluginFinish>(PLUGIN_FINISH);
+      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleStartParseFunction>>(
+        PLUGIN_START_PARSE_FUNCTION);
+      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishParseFunction>>(
+        PLUGIN_FINISH_PARSE_FUNCTION);
+      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
+      registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishType>>(PLUGIN_FINISH_TYPE);
       registerCallback<&InstanceImpl::handlePluginPassExecution>(PLUGIN_PASS_EXECUTION);
+      registerCallback<&InstanceImpl::handleFinishUnit>(PLUGIN_FINISH_UNIT);
 
       mTrace->push(getFullInputName());
       mTrace->push("Preprocessor");
@@ -85,8 +91,12 @@ private:
 
   static void unregisterCallbacks() noexcept
   {
-    unregisterCallback(PLUGIN_FINISH);
+    unregisterCallback(PLUGIN_START_PARSE_FUNCTION);
+    unregisterCallback(PLUGIN_FINISH_PARSE_FUNCTION);
+    unregisterCallback(PLUGIN_FINISH_DECL);
+    unregisterCallback(PLUGIN_FINISH_TYPE);
     unregisterCallback(PLUGIN_PASS_EXECUTION);
+    unregisterCallback(PLUGIN_FINISH_UNIT);
   }
 
   void cleanup() noexcept
@@ -116,8 +126,40 @@ private:
   void handlePreprocessingFinish()
   {
     collapse(*mTrace, levelDepth(Level::Stages));
+    // We start the next stage here because parser callbacks usually occur after an action has
+    // completed. Starting later would cause us to miss the first measure, while starting earlier
+    // would measure more work than necessary. For now, we prefer the latter.
     mTrace->push("Parser");
     mParserProfiler.emplace(mOptions, mTrace);
+  }
+
+  void handleStartParseFunction(void *gccData)
+  {
+  }
+
+  void handleFinishParseFunction(void *gccData)
+  {
+  }
+
+  void handleFinishDecl(void *gccData)
+  {
+  }
+
+  void handleFinishType(void *gccData)
+  {
+  }
+
+  template <void (InstanceImpl::*HandlerV)(void *)>
+  void handleParserCallback(void *gccData)
+  {
+    // We delete the preprocessing profiler here because deleting it from within its own callback
+    // would be unsafe. We also have no other reliable way to detect when preprocessing has finished
+    // except through the profiler itself, so we need to split process a little.
+    if (!mParserProfiler) {
+      mPpProfiler.reset();
+    }
+
+    (this->*HandlerV)(gccData);
   }
 
   void handlePluginPassExecution(void *gccData)
@@ -132,9 +174,9 @@ private:
     mBackendProfiler->handlePassExecution(gccData);
   }
 
-  void handlePluginFinish(void *gccData)
+  void handleFinishUnit(void *gccData)
   {
-    mBackendProfiler->handlePluginFinish(gccData);
+    mBackendProfiler->handleFinishUnit(gccData);
     mBackendProfiler.reset();
 
     collapse(*mTrace, 0);
