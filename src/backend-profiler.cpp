@@ -57,9 +57,11 @@ public:
 
     auto &pass = *static_cast<opt_pass *>(gccData);
 
-    if (isFunctionPass(pass.type)) {
+    if (isAsteriskPass(pass)) {
+      handleAsteriskPass(pass);
+    } else if (isFunctionPass(pass)) {
       handleFunctionPass(pass);
-    } else if (isIpaPass(pass.type)) {
+    } else if (isIpaPass(pass)) {
       handleIpaPass(pass);
     } else {
       logWarn("unknown pass type (", pass.type, ")");
@@ -78,6 +80,11 @@ private:
   std::shared_ptr<Trace> mTrace;
   std::string mLastPass;
   TimePoint mTimestamp = Clock::now();
+
+  void handleAsteriskPass(opt_pass &pass)
+  {
+    mLastPass = squashLevels({"Asterisk(*) passes", getPassTypeName(pass.type), pass.name});
+  }
 
   void handleFunctionPass(opt_pass &pass)
   {
@@ -100,13 +107,22 @@ private:
     }
   }
 
-  bool isFunctionPass(opt_pass_type &type)
+  bool isAsteriskPass(const opt_pass &pass)
   {
+    assert(pass.name != nullptr);
+
+    return pass.name[0] == '*';
+  }
+
+  bool isFunctionPass(const opt_pass &pass)
+  {
+    const auto &type = pass.type;
     return type == opt_pass_type::GIMPLE_PASS || type == opt_pass_type::RTL_PASS;
   }
 
-  bool isIpaPass(opt_pass_type &type)
+  bool isIpaPass(const opt_pass &pass)
   {
+    const auto &type = pass.type;
     return type == opt_pass_type::IPA_PASS || type == opt_pass_type::SIMPLE_IPA_PASS;
   }
 };
