@@ -13,7 +13,13 @@ Options parseOptions(const plugin_name_args &args)
 
   for (int i = 0; i < args.argc; ++i) {
     auto &&[name, value] = args.argv[i];
-    if (std::strcmp("no-individual", name) == 0) {
+    if (std::strcmp("basic-profiling", name) == 0) {
+      if (value != nullptr && std::strcmp("", value) != 0) {
+        logWarn("'basic-profiling' option value '", value, "' will be ignored");
+        continue;
+      }
+      options.basicProfiling = true;
+    } else if (std::strcmp("no-individual", name) == 0) {
       if (value != nullptr && std::strcmp("", value) != 0) {
         logWarn("'no-individual' option value '", value, "' will be ignored");
         continue;

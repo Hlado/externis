@@ -23,7 +23,7 @@ add_library(externis SHARED src/backend-profiler.cpp src/gcc-utils.cpp src/insig
 target_include_directories(externis PRIVATE ${EXTERNIS_GCC_PLUGIN_DIR}/include)
 
 if(INSIGHT_ENABLE_PROFILING)
-    target_compile_options(externis PRIVATE -fplugin=insight -fplugin-arg-insight-combined=${CMAKE_BINARY_DIR}/trace.collapsed)
+    target_compile_options(externis PRIVATE -fplugin=insight -fplugin-arg-insight-basic-profiling -fplugin-arg-insight-combined=${CMAKE_BINARY_DIR}/trace.collapsed)
 
     add_custom_target(insight_force_rebuild ALL
         COMMAND ${CMAKE_COMMAND} -P "${CMAKE_SOURCE_DIR}/cmake/remove-compiler-output.cmake"

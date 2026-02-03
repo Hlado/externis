@@ -55,8 +55,11 @@ public:
         PLUGIN_FINISH_PARSE_FUNCTION);
       registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishDecl>>(PLUGIN_FINISH_DECL);
       registerCallback<&InstanceImpl::handleParserCallback<&InstanceImpl::handleFinishType>>(PLUGIN_FINISH_TYPE);
-      registerCallback<&InstanceImpl::handlePluginPassExecution>(PLUGIN_PASS_EXECUTION);
-      registerCallback<&InstanceImpl::handleFinishUnit>(PLUGIN_FINISH_UNIT);
+      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handlePluginPassExecution>>(
+        PLUGIN_PASS_EXECUTION);
+      registerCallback<&InstanceImpl::handleBackendCallback<&InstanceImpl::handleFinishUnit>>(PLUGIN_FINISH_UNIT);
+      // Although it's called PLUGIN_FINISH, for multi input case it is called for each translation unit
+      registerCallback<&InstanceImpl::handleFinish>(PLUGIN_FINISH);
 
       mTrace->push(getFullInputName());
       mTrace->push("Preprocessor");
@@ -89,7 +92,7 @@ private:
     unregister_callback(PLUGIN_NAME.data(), event);
   }
 
-  static void unregisterCallbacks() noexcept
+  void unregisterCallbacks() noexcept
   {
     unregisterCallback(PLUGIN_START_PARSE_FUNCTION);
     unregisterCallback(PLUGIN_FINISH_PARSE_FUNCTION);
@@ -97,6 +100,7 @@ private:
     unregisterCallback(PLUGIN_FINISH_TYPE);
     unregisterCallback(PLUGIN_PASS_EXECUTION);
     unregisterCallback(PLUGIN_FINISH_UNIT);
+    unregisterCallback(PLUGIN_FINISH);
   }
 
   void cleanup() noexcept
@@ -159,10 +163,28 @@ private:
       mPpProfiler.reset();
     }
 
-    (this->*HandlerV)(gccData);
+    if (!mOptions.basicProfiling) {
+      (this->*HandlerV)(gccData);
+    }
   }
 
   void handlePluginPassExecution(void *gccData)
+  {
+    assert(mBackendProfiler);
+
+    mBackendProfiler->handlePassExecution(gccData);
+  }
+
+  void handleFinishUnit(void *gccData)
+  {
+    assert(mBackendProfiler);
+
+    mBackendProfiler->handleFinishUnit(gccData);
+    mBackendProfiler.reset();
+  }
+
+  template <void (InstanceImpl::*HandlerV)(void *)>
+  void handleBackendCallback(void *gccData)
   {
     if (!mBackendProfiler) {
       mParserProfiler.reset();
@@ -171,14 +193,14 @@ private:
       mBackendProfiler.emplace(mOptions, mTrace);
     }
 
-    mBackendProfiler->handlePassExecution(gccData);
+    if (!mOptions.basicProfiling) {
+      (this->*HandlerV)(gccData);
+    }
   }
 
-  void handleFinishUnit(void *gccData)
+  void handleFinish(void *gccData)
   {
-    mBackendProfiler->handleFinishUnit(gccData);
-    mBackendProfiler.reset();
-
+    // We can't collapse in PLUGIN_FINISH_UNIT because we want to handle it conditionally
     collapse(*mTrace, 0);
     auto collapsed = mTrace->flatten();
 

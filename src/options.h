@@ -8,6 +8,7 @@ struct plugin_name_args;
 namespace insight {
 
 struct Options {
+  bool basicProfiling{false};
   bool noIndividual{false};
   std::filesystem::path combined;
 };
@@ -23,6 +24,8 @@ constexpr std::string_view getHelpText()
          "  gcc -fplugin=insight [-fplugin-arg-insight-<option>...] <gcc-args>\n"
          "\n"
          "Options:\n"
+         "  basic-profiling  Disable detailed profiling, only top level stages are"
+         "                   measured"
          "  no-individual    Disable generation of per-file traces.\n"
          "  combined=<path>  Path to file used to accumulate a multi-file trace. Each\n"
          "                   individual trace is appended to the end of this file.\n";

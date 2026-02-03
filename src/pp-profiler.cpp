@@ -182,10 +182,12 @@ public:
     &dispatchCallback<&PpProfilerImpl::handleCallback<&PpProfilerImpl::handler, &cpp_callbacks::callback, __VA_ARGS__>>; \
   mOurCallbacks.callback = mReaderCallbacks->callback;
 
+      if (!mOptions.basicProfiling) {
+        INSIGHT_PPP_SET_CALLBACK(handleLineChange, line_change, cpp_reader *, const cpp_token *, int);
+        INSIGHT_PPP_SET_CALLBACK(handleUsed, used, cpp_reader *, location_t, cpp_hashnode *);
+        INSIGHT_PPP_SET_CALLBACK(handleUsedDefine, used_define, cpp_reader *, location_t, cpp_hashnode *);
+      }
       INSIGHT_PPP_SET_CALLBACK(handleFileChange, file_change, cpp_reader *, const line_map_ordinary *);
-      INSIGHT_PPP_SET_CALLBACK(handleLineChange, line_change, cpp_reader *, const cpp_token *, int);
-      INSIGHT_PPP_SET_CALLBACK(handleUsed, used, cpp_reader *, location_t, cpp_hashnode *);
-      INSIGHT_PPP_SET_CALLBACK(handleUsedDefine, used_define, cpp_reader *, location_t, cpp_hashnode *);
 
 #undef INSIGHT_PPP_SET_CALLBACK
     } catch (const std::exception &e) {
@@ -232,7 +234,9 @@ private:
 
   void handleFileChange(cpp_reader *reader, const line_map_ordinary *lineMap)
   {
-    mHeadersTracker.handleFileChange(reader, lineMap);
+    if (!mOptions.basicProfiling) {
+      mHeadersTracker.handleFileChange(reader, lineMap);
+    }
 
     // nullptr means finishing of preprocessing
     if (lineMap == nullptr) {
@@ -268,10 +272,12 @@ private:
       std::abort();
     }
 
+    if (!mOptions.basicProfiling) {
+      restoreCallback<&cpp_callbacks::line_change>();
+      restoreCallback<&cpp_callbacks::used>();
+      restoreCallback<&cpp_callbacks::used_define>();
+    }
     restoreCallback<&cpp_callbacks::file_change>();
-    restoreCallback<&cpp_callbacks::line_change>();
-    restoreCallback<&cpp_callbacks::used>();
-    restoreCallback<&cpp_callbacks::used_define>();
   }
 
   template <auto CallbackV>
