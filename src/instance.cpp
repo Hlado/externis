@@ -3,6 +3,7 @@
 #include "backend-profiler.h"
 #include "insight.h"
 #include "options.h"
+#include "parser-profiler.h"
 #include "pp-profiler.h"
 #include "trace.h"
 #include "utils.h"
@@ -53,7 +54,7 @@ public:
 
       mTrace->push(getFullInputName());
       mTrace->push("Preprocessor");
-      mPpProfiler = PpProfiler{options, mTrace, std::bind(&InstanceImpl::handlePreprocessingFinish, this)};
+      mPpProfiler.emplace(options, mTrace, std::bind(&InstanceImpl::handlePreprocessingFinish, this));
     } catch (const std::exception &e) {
       cleanup();
       throw;
@@ -74,6 +75,7 @@ private:
   const Options mOptions;
   std::shared_ptr<Trace> mTrace{std::make_shared<Trace>()};
   std::optional<PpProfiler> mPpProfiler;
+  std::optional<ParserProfiler> mParserProfiler;
   std::optional<BackendProfiler> mBackendProfiler;
 
   static void unregisterCallback(int event) noexcept
@@ -90,6 +92,7 @@ private:
   void cleanup() noexcept
   {
     mPpProfiler.reset();
+    mParserProfiler.reset();
     mBackendProfiler.reset();
     unregisterCallbacks();
   }
@@ -114,14 +117,16 @@ private:
   {
     collapse(*mTrace, levelDepth(Level::Stages));
     mTrace->push("Parser");
+    mParserProfiler.emplace(mOptions, mTrace);
   }
 
   void handlePluginPassExecution(void *gccData)
   {
     if (!mBackendProfiler) {
+      mParserProfiler.reset();
       collapse(*mTrace, levelDepth(Level::Stages));
       mTrace->push("Backend");
-      mBackendProfiler = BackendProfiler{mOptions, mTrace};
+      mBackendProfiler.emplace(mOptions, mTrace);
     }
 
     mBackendProfiler->handlePassExecution(gccData);
@@ -219,8 +224,6 @@ Instance::Instance(const Options &options)
 {
 }
 
-Instance::Instance(Instance &&) = default;
-Instance &Instance::operator=(Instance &&) = default;
 Instance::~Instance() = default;
 
 } // namespace insight

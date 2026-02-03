@@ -333,8 +333,6 @@ PpProfiler::PpProfiler(const Options &options, std::shared_ptr<Trace> trace, std
 {
 }
 
-PpProfiler::PpProfiler(PpProfiler &&) = default;
-PpProfiler &PpProfiler::operator=(PpProfiler &&) = default;
 PpProfiler::~PpProfiler() = default;
 
 } // namespace insight

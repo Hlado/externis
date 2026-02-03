@@ -50,7 +50,6 @@ public:
 
   BackendProfilerImpl(const BackendProfilerImpl &) = delete;
   BackendProfilerImpl &operator=(const BackendProfilerImpl &) = delete;
-  ~BackendProfilerImpl() = default;
 
   void handlePassExecution(void *gccData)
   {
@@ -121,8 +120,6 @@ BackendProfiler::BackendProfiler(const Options &options, std::shared_ptr<Trace> 
 {
 }
 
-BackendProfiler::BackendProfiler(BackendProfiler &&) = default;
-BackendProfiler &BackendProfiler::operator=(BackendProfiler &&) = default;
 BackendProfiler::~BackendProfiler() = default;
 
 void BackendProfiler::handlePassExecution(void *gccData)

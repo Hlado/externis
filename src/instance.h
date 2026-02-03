@@ -15,8 +15,8 @@ struct Options;
 class Instance {
 public:
   explicit Instance(const Options &options);
-  Instance(Instance &&);
-  Instance &operator=(Instance &&);
+  Instance(Instance &&) = delete;
+  Instance &operator=(Instance &&) = delete;
   ~Instance();
 
 private:

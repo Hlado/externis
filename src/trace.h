@@ -35,8 +35,8 @@ public:
     frontier.push(root.get());
   }
 
-  Trace(Trace &&) = default;
-  Trace &operator=(Trace &&) = default;
+  Trace(Trace &&other) = delete;
+  Trace &operator=(Trace &&) = delete;
 
   const std::string &name() const
   {
@@ -60,20 +60,21 @@ public:
     return frontier.size() - 1;
   }
 
+  void add(Event event)
+  {
+    auto &level = current();
+
+    auto duration = event.duration;
+    // order is important for exception safety
+    level.events.push_back(std::move(event));
+    level.duration += duration;
+  }
+
   void push(std::string name)
   {
     auto &levels = current().levels;
     levels.push_back(Level{std::move(name)});
     frontier.push(&levels.back());
-  }
-
-  // Discards the current level along with all its sub-levels and events.
-  // No duration from this level will be added to the parent level.
-  void drop()
-  {
-    assert_not_rooted();
-
-    frontier.pop();
   }
 
   void pop()
@@ -85,36 +86,28 @@ public:
     current().duration += duration;
   }
 
-  void add(Event event)
-  {
-    auto &level = current();
-
-    auto duration = event.duration;
-    // order is important for exception safety
-    level.events.push_back(std::move(event));
-    level.duration += duration;
-  }
-
-  // Moves all events and levels from another Trace into this level.
-  // The other Trace must be at zero depth.
-  void merge(Trace &&other)
-  {
-    if (this == &other) {
-      throw Error("can't merge trace with itself");
-    }
-
-    auto &level = current();
-    level.events.insert(level.events.end(), std::make_move_iterator(other.root->events.begin()),
-                        std::make_move_iterator(other.root->events.end()));
-    level.levels.insert(level.levels.end(), std::make_move_iterator(other.root->levels.begin()),
-                        std::make_move_iterator(other.root->levels.end()));
-  }
-
   // Pops levels until depth is as desired. Does nothing if current depth is already equal or less than desired
   void collapse(std::size_t desiredDepth = 0)
   {
     while (depth() > desiredDepth) {
       pop();
+    }
+  }
+
+  // Discards the current level along with all its sub-levels and events.
+  // No duration from this level will be added to the parent level.
+  void drop()
+  {
+    assert_not_rooted();
+
+    frontier.pop();
+  }
+
+  // Dropss levels until depth is as desired. Does nothing if current depth is already equal or less than desired
+  void discard(std::size_t desiredDepth = 0)
+  {
+    while (depth() > desiredDepth) {
+      drop();
     }
   }
 

@@ -19,7 +19,7 @@ std::optional<Instance> instance;
 
 void handleStartUnit(void *, void *)
 {
-  instance = std::make_optional<Instance>(options);
+  instance.emplace(options);
 }
 
 } // namespace

@@ -16,8 +16,8 @@ class Trace;
 class BackendProfiler {
 public:
   explicit BackendProfiler(const Options &options, std::shared_ptr<Trace> trace);
-  BackendProfiler(BackendProfiler &&);
-  BackendProfiler &operator=(BackendProfiler &&);
+  BackendProfiler(BackendProfiler &&) = delete;
+  BackendProfiler &operator=(BackendProfiler &&) = delete;
   ~BackendProfiler();
 
   void handlePassExecution(void *gccData);
