@@ -182,7 +182,7 @@ public:
     &dispatchCallback<&PpProfilerImpl::handleCallback<&PpProfilerImpl::handler, &cpp_callbacks::callback, __VA_ARGS__>>; \
   mOurCallbacks.callback = mReaderCallbacks->callback;
 
-      if (!mOptions.basicProfiling) {
+      if (!mOptions.basicProfiling && mOptions.withMacros) {
         INSIGHT_PPP_SET_CALLBACK(handleLineChange, line_change, cpp_reader *, const cpp_token *, int);
         INSIGHT_PPP_SET_CALLBACK(handleUsed, used, cpp_reader *, location_t, cpp_hashnode *);
         INSIGHT_PPP_SET_CALLBACK(handleUsedDefine, used_define, cpp_reader *, location_t, cpp_hashnode *);

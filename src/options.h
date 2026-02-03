@@ -8,9 +8,10 @@ struct plugin_name_args;
 namespace insight {
 
 struct Options {
+  std::filesystem::path combined;
   bool basicProfiling{false};
   bool noIndividual{false};
-  std::filesystem::path combined;
+  bool withMacros{false};
 };
 
 
@@ -26,9 +27,10 @@ constexpr std::string_view getHelpText()
          "Options:\n"
          "  basic-profiling  Disable detailed profiling, only top level stages are"
          "                   measured"
-         "  no-individual    Disable generation of per-file traces.\n"
          "  combined=<path>  Path to file used to accumulate a multi-file trace. Each\n"
-         "                   individual trace is appended to the end of this file.\n";
+         "                   individual trace is appended to the end of this file.\n"
+         "  no-individual    Disable generation of per-file traces.\n"
+         "  with-macros      Enable macros profiling.";
 }
 
 } // namespace insight

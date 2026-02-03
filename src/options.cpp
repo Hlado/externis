@@ -19,18 +19,24 @@ Options parseOptions(const plugin_name_args &args)
         continue;
       }
       options.basicProfiling = true;
-    } else if (std::strcmp("no-individual", name) == 0) {
-      if (value != nullptr && std::strcmp("", value) != 0) {
-        logWarn("'no-individual' option value '", value, "' will be ignored");
-        continue;
-      }
-      options.noIndividual = true;
     } else if (std::strcmp("combined", name) == 0) {
       if (value == nullptr || std::strcmp("", value) == 0) {
         logWarn("'combined' option doesn't have value");
         continue;
       }
       options.combined = value;
+    } else if (std::strcmp("no-individual", name) == 0) {
+      if (value != nullptr && std::strcmp("", value) != 0) {
+        logWarn("'no-individual' option value '", value, "' will be ignored");
+        continue;
+      }
+      options.noIndividual = true;
+    } else if (std::strcmp("with-macros", name) == 0) {
+      if (value != nullptr && std::strcmp("", value) != 0) {
+        logWarn("'with-macros' option value '", value, "' will be ignored");
+        continue;
+      }
+      options.withMacros = true;
     } else {
       logWarn("unrecognozed option: '", name, "'");
     }
