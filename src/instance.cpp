@@ -226,7 +226,9 @@ private:
     uncategorized.value() -= ignore;
     mTraces.global.add(Event{"Uncategorized", *uncategorized});
     mTraces.global.collapse();
+
     auto collapsed = mTraces.global.flatten();
+    filter(collapsed, mOptions.durationTreshold);
 
     std::shared_ptr<std::ostream> individual = getIndividualStream();
     if (individual) {
@@ -245,6 +247,36 @@ private:
     }
 
     cleanup();
+  }
+
+  static void filter(std::unordered_map<std::string, NanosecondsFp> &collapsed, std::chrono::microseconds treshold)
+  {
+    assert(treshold >= std::chrono::microseconds{});
+
+    if (treshold == std::chrono::microseconds{}) {
+      return;
+    }
+
+    std::unordered_map<std::string, NanosecondsFp> filtered;
+    for (auto &&[key, value] : collapsed) {
+      if (value >= NanosecondsFp{treshold}) {
+        auto [it, inserted] = filtered.insert(std::make_pair(key, value));
+        if (!inserted) {
+          it->second += value;
+        }
+      } else {
+        // TODO: not just merge under "Uncategorized" but provide counter
+        auto uncategorizedKey = (key.rfind(';') == std::string::npos) ?
+          "Uncategorized" :
+          key.substr(0, key.rfind(';') + 1) + "Uncategorized";
+        auto [it, inserted] = filtered.insert(std::make_pair(uncategorizedKey, value));
+        if (!inserted) {
+          it->second += value;
+        }
+      }
+    }
+
+    collapsed = filtered;
   }
 
   std::shared_ptr<std::ostream> getIndividualStream() const

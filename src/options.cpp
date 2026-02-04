@@ -3,6 +3,7 @@
 #include "utils.h"
 
 #include <functional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -58,9 +59,34 @@ void pathOptionHandler(std::string_view name, std::string_view value, std::files
 {
   if (value == "") {
     logWarn("'", name, "' option doesn't have value");
+    return;
   }
 
   out = value;
+}
+
+template <typename RepT, typename PeriodT>
+void durationOptionHandler(std::string_view name, std::string_view value, std::chrono::duration<RepT, PeriodT> &out)
+{
+  if (value == "") {
+    logWarn("'", name, "' option doesn't have value");
+    return;
+  }
+
+  long long int numeric;
+  try {
+    numeric = std::stoll(std::string{value});
+  } catch (const std::exception &e) {
+    throw Error{"'", name, "' option parsing error: ", e.what()};
+  }
+
+  if (numeric < 0) {
+    throw Error{"'", name, "' option value must be positive"};
+  }
+
+  out = std::chrono::duration<RepT, PeriodT>{numeric};
+
+  logError(numeric);
 }
 
 } // unnamed namespace
@@ -72,6 +98,7 @@ Options parseOptions(const plugin_name_args &args)
   Reader reader;
   reader.registerHandler("basic-profiling", &Options::basicProfiling, flagOptionHandler);
   reader.registerHandler("combined", &Options::combined, pathOptionHandler);
+  reader.registerHandler("duration-treshold", &Options::durationTreshold, durationOptionHandler);
   reader.registerHandler("no-backend", &Options::noBackend, flagOptionHandler);
   reader.registerHandler("no-individual", &Options::noIndividual, flagOptionHandler);
   reader.registerHandler("no-parser", &Options::noParser, flagOptionHandler);

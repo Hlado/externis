@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
 #include <string_view>
 
@@ -9,6 +10,7 @@ namespace insight {
 
 struct Options {
   std::filesystem::path combined;
+  std::chrono::microseconds durationTreshold{1000};
   bool basicProfiling{false};
   bool noBackend{false};
   bool noIndividual{false};
@@ -33,6 +35,9 @@ constexpr std::string_view getHelpText()
          "                   measured\n"
          "  combined=<path>  Path to file used to accumulate a multi-file trace. Each\n"
          "                   individual trace is appended to the end of this file.\n"
+         "  duration-treshold=<microseconds>\n"
+         "                   Minimal event duration to be included separately (1000 by\n"
+         "                   default). Zero value disables this filter.\n"
          "  no-backend       Disable backend profiling.\n"
          "  no-individual    Disable generation of per-file traces.\n"
          "  no-parser        Disable parser profiling.\n"
