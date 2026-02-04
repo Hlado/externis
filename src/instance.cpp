@@ -62,11 +62,13 @@ public:
       registerCallback<&InstanceImpl::handleFinish>(PLUGIN_FINISH);
 
       if (!mOptions.noUnit) {
-        mTrace->push(getFullInputName());
+        mTraces.global.push(getFullInputName());
       }
 
-      mTrace->push("Preprocessor");
-      mPpProfiler.emplace(options, mTrace, std::bind(&InstanceImpl::handlePreprocessingFinish, this));
+      mTraces.preprocessor = std::make_unique<Trace>();
+      mTraces.preprocessor->push("Preprocessor");
+      mPpProfiler.emplace(options, mTraces.preprocessor,
+                          std::bind(&InstanceImpl::handlePreprocessingFinish, this));
     } catch (const std::exception &e) {
       cleanup();
       throw;
@@ -82,10 +84,16 @@ public:
   }
 
 private:
-  enum class Level { Stages };
+  // TODO: partial traces likely have to be moved into profilers
+  struct Traces {
+    Trace global;
+    std::shared_ptr<Trace> preprocessor;
+    std::shared_ptr<Trace> parser;
+    std::shared_ptr<Trace> backend;
+  };
 
   const Options mOptions;
-  std::shared_ptr<Trace> mTrace{std::make_shared<Trace>()};
+  Traces mTraces;
   std::optional<PpProfiler> mPpProfiler;
   std::optional<ParserProfiler> mParserProfiler;
   std::optional<BackendProfiler> mBackendProfiler;
@@ -120,26 +128,15 @@ private:
     register_callback(PLUGIN_NAME.data(), event, &::insight::handleCallback<&dispatchCallback<HandlerV>>, this);
   }
 
-  std::size_t levelDepth(Level desiredLevel)
-  {
-    auto base = mOptions.noUnit ? std::size_t{1} : std::size_t{0};
-
-    switch (desiredLevel) {
-    case Level::Stages:
-      return 1 - base;
-    default:
-      throw Error{"unknown level"};
-    };
-  }
-
   void handlePreprocessingFinish()
   {
-    collapse(*mTrace, levelDepth(Level::Stages));
+    collapse(*mTraces.preprocessor);
     // We start the next stage here because parser callbacks usually occur after an action has
     // completed. Starting later would cause us to miss the first measure, while starting earlier
     // would measure more work than necessary. For now, we prefer the latter.
-    mTrace->push("Parser");
-    mParserProfiler.emplace(mOptions, mTrace);
+    mTraces.parser = std::make_unique<Trace>();
+    mTraces.parser->push("Parser");
+    mParserProfiler.emplace(mOptions, mTraces.parser);
   }
 
   void handleStartParseFunction(void *gccData)
@@ -193,9 +190,10 @@ private:
   {
     if (!mBackendProfiler) {
       mParserProfiler.reset();
-      collapse(*mTrace, levelDepth(Level::Stages));
-      mTrace->push("Backend");
-      mBackendProfiler.emplace(mOptions, mTrace);
+      collapse(*mTraces.parser);
+      mTraces.backend = std::make_shared<Trace>();
+      mTraces.backend->push("Backend");
+      mBackendProfiler.emplace(mOptions, mTraces.backend);
     }
 
     if (!mOptions.basicProfiling) {
@@ -205,9 +203,14 @@ private:
 
   void handleFinish(void *gccData)
   {
-    // We can't collapse in PLUGIN_FINISH_UNIT because we want to handle it conditionally
-    collapse(*mTrace, 0);
-    auto collapsed = mTrace->flatten();
+    // We can't do it in FINISH_UNIT callback because it can be disabled on basic only profiling
+    collapse(*mTraces.backend);
+
+    mTraces.global.consume(std::move(*mTraces.preprocessor));
+    mTraces.global.consume(std::move(*mTraces.parser));
+    mTraces.global.consume(std::move(*mTraces.backend));
+    mTraces.global.collapse();
+    auto collapsed = mTraces.global.flatten();
 
     std::shared_ptr<std::ostream> individual = getIndividualStream();
     if (individual) {

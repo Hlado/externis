@@ -207,7 +207,7 @@ private:
 };
 
 // Temporary helper
-inline void collapse(Trace &trace, std::size_t desiredDepth)
+inline void collapse(Trace &trace, std::size_t desiredDepth = 0)
 {
   using namespace std::chrono;
 
