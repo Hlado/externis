@@ -3,7 +3,7 @@
 #include "utils.h"
 
 #include <cassert>
-#include <deque>
+#include <list>
 #include <memory>
 #include <stack>
 #include <string>
@@ -13,7 +13,7 @@ namespace insight {
 
 struct Event {
   std::string name;
-  std::chrono::nanoseconds duration;
+  NanosecondsFp duration;
 };
 
 // The Trace class consists of 'levels' and 'events'.
@@ -38,23 +38,23 @@ public:
   Trace(Trace &&other) = delete;
   Trace &operator=(Trace &&) = delete;
 
-  const std::string &name() const
+  const std::string &name() const noexcept
   {
     return current().name;
   }
 
-  TimePoint timestamp() const
+  const TimePoint &timestamp() const noexcept
   {
     return current().timestamp;
   }
 
-  std::chrono::nanoseconds duration() const
+  const NanosecondsFp &duration() const noexcept
   {
     return current().duration;
   }
 
   // Zero-based, zero after creation
-  std::size_t depth() const
+  std::size_t depth() const noexcept
   {
     assert(!frontier.empty());
     return frontier.size() - 1;
@@ -77,17 +77,18 @@ public:
     frontier.push(&levels.back());
   }
 
+  // Noexcept if not rooted
   void pop()
   {
     assert_not_rooted();
 
     auto duration = current().duration;
-    frontier.pop();
+    frontier.pop(); // assumed to be noexcept
     current().duration += duration;
   }
 
   // Pops levels until depth is as desired. Does nothing if current depth is already equal or less than desired
-  void collapse(std::size_t desiredDepth = 0)
+  void collapse(std::size_t desiredDepth = 0) noexcept
   {
     while (depth() > desiredDepth) {
       pop();
@@ -96,6 +97,7 @@ public:
 
   // Discards the current level along with all its sub-levels and events.
   // No duration from this level will be added to the parent level.
+  // Noexcept if not rooted
   void drop()
   {
     assert_not_rooted();
@@ -104,16 +106,28 @@ public:
   }
 
   // Dropss levels until depth is as desired. Does nothing if current depth is already equal or less than desired
-  void discard(std::size_t desiredDepth = 0)
+  void discard(std::size_t desiredDepth = 0) noexcept
   {
     while (depth() > desiredDepth) {
       drop();
     }
   }
 
-  std::unordered_map<std::string, std::chrono::nanoseconds> flatten() const
+  // Collapse other trace and steal it's levels and events to current level
+  void consume(Trace &&other) noexcept
   {
-    std::unordered_map<std::string, std::chrono::nanoseconds> result;
+    other.collapse();
+
+    auto &level = current();
+    level.events.splice(level.events.end(), other.current().events);
+    level.levels.splice(level.levels.end(), other.current().levels);
+    level.duration += other.duration();
+    other.current().duration = NanosecondsFp{};
+  }
+
+  std::unordered_map<std::string, NanosecondsFp> flatten() const
+  {
+    std::unordered_map<std::string, NanosecondsFp> result;
     auto prefix = std::string{};
     prefix.reserve(2048);
 
@@ -126,32 +140,32 @@ private:
   struct Level {
     std::string name;
     TimePoint timestamp{Clock::now()};
-    std::chrono::nanoseconds duration{};
-    std::deque<Level> levels;
-    std::deque<Event> events;
+    NanosecondsFp duration{};
+    std::list<Level> levels;
+    std::list<Event> events;
   };
 
   std::unique_ptr<Level> root{std::make_unique<Level>()};
-  // Default allocators always equal, so it's safe to assume that pointers stay the same on move
+  // List elements and iterators invalidatet only on erasing, so we can hold pointer safely
   std::stack<Level *> frontier;
 
-  bool rooted() const
+  bool rooted() const noexcept
   {
     return depth() == 0;
   }
 
-  Level &current()
+  Level &current() noexcept
   {
     return const_cast<Level &>(static_cast<const Trace &>(*this).current());
   }
 
-  const Level &current() const
+  const Level &current() const noexcept
   {
     assert(!frontier.empty());
     return *frontier.top();
   }
 
-  void flatten(std::unordered_map<std::string, std::chrono::nanoseconds> &out,
+  void flatten(std::unordered_map<std::string, NanosecondsFp> &out,
                const Level &level,
                std::string &prefix,
                std::size_t depth) const
@@ -166,8 +180,7 @@ private:
     }
 
     for (auto &&event : level.events) {
-      auto [it, inserted] =
-        out.insert(std::make_pair(prefix + normalizeName(event.name), std::chrono::nanoseconds{}));
+      auto [it, inserted] = out.insert(std::make_pair(prefix + normalizeName(event.name), NanosecondsFp{}));
       it->second += event.duration;
     }
 
@@ -204,9 +217,9 @@ inline void collapse(Trace &trace, std::size_t desiredDepth)
 
   while (trace.depth() >= desiredDepth) {
     auto total = measure(trace.timestamp(), now);
-    auto uncategorized = std::max(nanoseconds{}, nanoseconds{total - trace.duration()});
+    auto uncategorized = std::max(NanosecondsFp{}, NanosecondsFp{total - trace.duration()});
 
-    if (duration_cast<microseconds>(uncategorized) > microseconds{}) {
+    if (MicrosecondsFp{uncategorized} > MicrosecondsFp{0.5}) {
       trace.add(Event{"Uncategorized", uncategorized});
     }
 

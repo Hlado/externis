@@ -19,6 +19,8 @@ namespace insight {
 // our purposes. But this may change in the future.
 using Clock = std::chrono::high_resolution_clock;
 using TimePoint = Clock::time_point;
+using MicrosecondsFp = std::chrono::duration<double, std::nano>;
+using NanosecondsFp = std::chrono::duration<double, std::nano>;
 
 enum class Verbosity { Minimal, Default, Detailed };
 
@@ -62,19 +64,21 @@ void handleCallback(void *gccData, void *userData) noexcept
   }
 }
 
-inline std::chrono::nanoseconds measure(TimePoint then, TimePoint now)
+inline NanosecondsFp measure(TimePoint then, TimePoint now)
 {
-  using namespace std::chrono;
-
   // Clock isn't guaranteed to be steady
-  return std::max(nanoseconds::zero(), nanoseconds{now - then});
+  return std::max(NanosecondsFp{}, NanosecondsFp{now - then});
 }
 
-inline void dump(std::unordered_map<std::string, std::chrono::nanoseconds> &collapsed, std::ostream &stream)
+inline void dump(std::unordered_map<std::string, NanosecondsFp> &collapsed, std::ostream &stream)
 {
   using namespace std::chrono;
 
   for (auto &&[n, d] : collapsed) {
+    if (d > microseconds::max()) {
+      throw Error{"duration overflow"};
+    }
+
     stream << n << " " << duration_cast<microseconds>(d).count() << "\n";
   }
   stream.flush();
