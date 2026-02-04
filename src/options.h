@@ -10,7 +10,10 @@ namespace insight {
 struct Options {
   std::filesystem::path combined;
   bool basicProfiling{false};
+  bool noBackend{false};
   bool noIndividual{false};
+  bool noParser{false};
+  bool noPreprocessor{false};
   bool noUnit{false};
   bool withMacros{false};
 };
@@ -30,7 +33,10 @@ constexpr std::string_view getHelpText()
          "                   measured\n"
          "  combined=<path>  Path to file used to accumulate a multi-file trace. Each\n"
          "                   individual trace is appended to the end of this file.\n"
+         "  no-backend       Disable backend profiling.\n"
          "  no-individual    Disable generation of per-file traces.\n"
+         "  no-parser        Disable parser profiling.\n"
+         "  no-preprocessor  Disable preprocessor profiling.\n"
          "  no-unit          Exclude topmost translation unit level from trace.\n"
          "  with-macros      Enable macros profiling.\n";
 }

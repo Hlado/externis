@@ -5,6 +5,7 @@
 #include <cassert>
 #include <list>
 #include <memory>
+#include <optional>
 #include <stack>
 #include <string>
 #include <unordered_map>
@@ -207,6 +208,19 @@ private:
 };
 
 // Temporary helper
+inline std::optional<NanosecondsFp> getUncategorized(Trace &trace, TimePoint now)
+{
+  auto total = measure(trace.timestamp(), now);
+  auto uncategorized = std::max(NanosecondsFp{}, NanosecondsFp{total - trace.duration()});
+
+  if (MicrosecondsFp{uncategorized} > MicrosecondsFp{0.5}) {
+    return uncategorized;
+  } else {
+    return {};
+  }
+}
+
+// Temporary helper
 inline void collapse(Trace &trace, std::size_t desiredDepth = 0)
 {
   using namespace std::chrono;
@@ -216,11 +230,9 @@ inline void collapse(Trace &trace, std::size_t desiredDepth = 0)
   auto now = Clock::now();
 
   while (trace.depth() >= desiredDepth) {
-    auto total = measure(trace.timestamp(), now);
-    auto uncategorized = std::max(NanosecondsFp{}, NanosecondsFp{total - trace.duration()});
-
-    if (MicrosecondsFp{uncategorized} > MicrosecondsFp{0.5}) {
-      trace.add(Event{"Uncategorized", uncategorized});
+    auto uncategorized = getUncategorized(trace, now);
+    if (uncategorized) {
+      trace.add(Event{"Uncategorized", *uncategorized});
     }
 
     if (trace.depth() == desiredDepth) {

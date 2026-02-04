@@ -206,9 +206,25 @@ private:
     // We can't do it in FINISH_UNIT callback because it can be disabled on basic only profiling
     collapse(*mTraces.backend);
 
-    mTraces.global.consume(std::move(*mTraces.preprocessor));
-    mTraces.global.consume(std::move(*mTraces.parser));
-    mTraces.global.consume(std::move(*mTraces.backend));
+    auto ignore = NanosecondsFp{};
+    if (mOptions.noPreprocessor) {
+      ignore += mTraces.preprocessor->duration();
+    } else {
+      mTraces.global.consume(std::move(*mTraces.preprocessor));
+    }
+    if (mOptions.noParser) {
+      ignore += mTraces.parser->duration();
+    } else {
+      mTraces.global.consume(std::move(*mTraces.parser));
+    }
+    if (mOptions.noBackend) {
+      ignore += mTraces.backend->duration();
+    } else {
+      mTraces.global.consume(std::move(*mTraces.backend));
+    }
+    auto uncategorized = getUncategorized(mTraces.global, Clock::now());
+    uncategorized.value() -= ignore;
+    mTraces.global.add(Event{"Uncategorized", *uncategorized});
     mTraces.global.collapse();
     auto collapsed = mTraces.global.flatten();
 
